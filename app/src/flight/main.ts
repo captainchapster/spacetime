@@ -14,7 +14,7 @@ import {
 } from '../physics/units';
 import { Ambience } from './audio';
 import { Beacons } from './beacons';
-import { type Caption, Story, epilogue } from './story';
+import { type Caption, type Fate, Story, epilogue } from './story';
 import { type HomeSignal, homeSignal, sampleView, sightBeacon, tidalAcceleration, type ViewSample } from '../physics/observe';
 import { installTooltips, tip } from './tooltip';
 import { loadRealSky, skyMatrix } from './realSky';
@@ -596,7 +596,14 @@ function simulate(dtReal: number, run: boolean, piloted: boolean) {
   alignPlatform(hole, ship, settings.reference);
   feltG = geometricToG(Math.hypot(...lastAcc), settings.mass);
   beacons.advanceTo(ship.x[0]);
+  // A real hull has a breaking point: the tidal stretch from nose to tail.
+  const tidal = tidalAcceleration(Math.max(hole.radius(ship.x), 1e-3), SHIP_LENGTH_M, gravitationalRadius(settings.mass));
+  if (!ship.crushed && tidal > HULL_LIMIT_G) ship.end('tidal');
 }
+
+/** The ship's length (metres), and the tidal stretch across it (g) at which the hull fails. */
+const SHIP_LENGTH_M = 100;
+const HULL_LIMIT_G = 1000;
 
 /** Navball, speed tape and altimeter, measured against the local hovering observer. */
 function drawInstruments() {
@@ -615,7 +622,7 @@ function drawInstruments() {
   }
   navWasValid = nav.valid;
   const r = hole.radius(ship.x);
-  const lamps = { homeLost: home === null, tidalG: tidalAcceleration(Math.max(r, 0.05), 100, gravitationalRadius(settings.mass)) };
+  const lamps = { homeLost: home === null, tidalG: tidalAcceleration(Math.max(r, 1e-3), SHIP_LENGTH_M, gravitationalRadius(settings.mass)) };
   navHud.draw(nav, {
     r: hole.radius(ship.x),
     horizon: hole.horizonRadius,
@@ -839,7 +846,12 @@ function updateHud() {
     lines.push(row(`Beacon ${i + 1}`, `${where}${speed} · its clock ${formatDuration(b.tau * tg)}`));
   });
   if (settings.rearView) lines.push('<div class="warn">Looking back (V)</div>');
-  if (ship.crushed) lines.push('<div class="warn">Reached the singularity. Restart from the Ship menu.</div>');
+  if (ship.crushed) {
+    const how = { innerHorizon: 'Reached the inner horizon', singularity: 'Reached the singularity', tidal: 'Torn apart by tides' }[
+      ship.fate ?? 'singularity'
+    ];
+    lines.push(`<div class="warn">${how}. Restart from the Ship menu.</div>`);
+  }
   else if (r < hole.horizonRadius)
     lines.push(
       '<div class="warn">Inside the event horizon: every future path leads inward. The outside universe is behind you (V to look back).</div>',
@@ -887,7 +899,7 @@ function updateAmbience(dtReal: number) {
   const M = settings.mass;
   const rg = gravitationalRadius(M);
   const r = hole.radius(ship.x);
-  const tidalG = tidalAcceleration(Math.max(r, 0.05), 100, rg);
+  const tidalG = tidalAcceleration(Math.max(r, 1e-3), SHIP_LENGTH_M, rg);
 
   // What's ahead (or behind, looking back): a few times a second.
   ambienceTimer -= dtReal;
@@ -963,7 +975,12 @@ function updateAmbience(dtReal: number) {
 
   if (ship.crushed && !ended) {
     ended = true;
-    showEpilogue();
+    const fate: Fate = ship.fate ?? 'singularity';
+    // At the inner horizon, an illustrative white-out (see the epilogue) before the words.
+    if (fate === 'innerHorizon') {
+      document.getElementById('flash')!.classList.add('show');
+      window.setTimeout(() => showEpilogue(fate), 1800);
+    } else showEpilogue(fate);
   }
 }
 
@@ -1006,10 +1023,12 @@ function clearCaptions() {
   captionEl.classList.remove('show');
 }
 
-function showEpilogue() {
+
+function showEpilogue(fate: Fate) {
+  if (!ended) return; // restarted meanwhile
   clearCaptions();
   const tg = gravitationalTime(settings.mass);
-  const [title, ...lines] = epilogue(formatDuration(ship.tau * tg), formatDuration(ship.x[0] * tg));
+  const [title, ...lines] = epilogue(fate, formatDuration(ship.tau * tg), formatDuration(ship.x[0] * tg));
   const el = document.getElementById('epilogue')!;
   el.querySelector('h2')!.textContent = title;
   el.querySelector('.lines')!.innerHTML = lines.map((l) => `<p>${l}</p>`).join('');
@@ -1017,6 +1036,7 @@ function showEpilogue() {
 }
 function hideEpilogue() {
   ended = false;
+  document.getElementById('flash')!.classList.remove('show');
   clearCaptions();
   document.getElementById('epilogue')?.classList.remove('show');
 }

@@ -166,9 +166,36 @@ nothing flashes or jumps. What changes is where the outside universe is.
   result at three depths. GPU renders match it to within half a degree, down to r = 0.2M.
 - Auto-exposure compensates for the darkening, like an adapting eye. Turn it off to see the
   true dimming.
-- Not modelled: what happens at a spinning hole's inner horizon. In this idealised eternal
-  solution light piles up there, infinitely blueshifted; in real black holes it's an open
-  research question.
+
+**How the journey ends.** There are three endings, each where the physics says, not at an
+arbitrary radius:
+- *Spinning hole: the inner horizon, r₋.*
+  - The exact Kerr solution carries on past r₋: below it r is a space direction again, the
+    singularity is a ring you can fly past, and the solution continues through the ring into
+    a negative-mass universe and out through a white hole into another universe.
+  - A real hole is expected to end at r₋ instead, but which half of r₋ matters. The
+    famous "the whole future of the universe flashes before your eyes" happens at the
+    *Cauchy horizon*. That half is where all of the outside's future arrives, infinitely
+    blueshifted, and in a real hole it becomes a singularity (mass inflation: Poisson &
+    Israel 1990; Ori 1991).
+  - A ship falling in crosses the *other*, "outgoing" half, before most of the outside's
+    future has happened. In the exact solution that crossing is calm. For anyone falling in
+    long after the hole formed, it becomes an effective shock wave that crushes them almost
+    instantly (Marolf & Ori 2012).
+  - Up to r₋ the view is computed exactly. On the way in, light from outside reaches about
+    50× its original energy (for spin 0.95), not infinity. The final white-out is labelled
+    as illustrative, not computed.
+- *Non-spinning hole: the central singularity.* Inside the horizon, r = 0 is a moment
+  rather than a place, and every path reaches it.
+- *Torn apart by tides.* The hull of the 100 m ship fails when the tidal stretch from nose
+  to tail passes 1000 g.
+  - Near a 10-solar-mass hole that happens well outside the horizon.
+  - Near Gargantua it happens only within about 0.004 M of a non-spinning centre.
+
+`test/ending.test.ts` checks each ending: falls at several angles and spins stop within one
+step of r₋, a non-spinning fall reaches the singularity, and the tidal limits fall where
+they should. Ship steps now shrink rather than leap when the curvature changes fast. A
+frame deep in the hole may cover less proper time, but a step is never wrong.
 
 **Ambience** (Ambience menu). Space is silent, so the sound is a *sonification*: the ship
 turning what it sees and feels into sound. Every voice follows the physics:

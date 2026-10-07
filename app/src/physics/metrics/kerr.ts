@@ -45,6 +45,30 @@ export class Kerr implements Spacetime {
     return this.mass + Math.sqrt(this.mass * this.mass - this.a * this.a);
   }
 
+  /** r₋, the inner (Cauchy) horizon; 0 without spin. */
+  get innerHorizonRadius() {
+    return this.mass - Math.sqrt(this.mass * this.mass - this.a * this.a);
+  }
+
+  /**
+   * Where the journey ends, if x is past that point:
+   *  - 'innerHorizon': with spin, at r₋. The exact solution continues beyond it (to the ring
+   *    singularity, other universes and so on), but a real hole is expected to end there.
+   *    An infaller crosses the "outgoing" half of r₋ (at finite advanced time), which for any
+   *    late infaller becomes an effective shock (Marolf & Ori 2012). The other half, the
+   *    Cauchy horizon where all of the outside's future arrives infinitely blueshifted, becomes
+   *    a singularity (mass inflation; Poisson & Israel 1990).
+   *  - 'singularity': without (meaningful) spin, the central singularity r = 0, which every
+   *    path inside the horizon reaches. (r is stopped a hair short of it, where the
+   *    equations themselves break.)
+   */
+  ending(x: ArrayLike<number>): 'innerHorizon' | 'singularity' | null {
+    const r = this.radius(x);
+    const rMinus = this.innerHorizonRadius;
+    if (rMinus > 1e-3 * this.mass) return r <= rMinus ? 'innerHorizon' : null;
+    return r < 1e-3 * this.mass ? 'singularity' : null;
+  }
+
   radius(x: ArrayLike<number>) {
     return kerrRadius(x[1], x[2], x[3], this.a);
   }
@@ -65,11 +89,12 @@ export class Kerr implements Spacetime {
   }
 
   timescale(x: Vec4) {
-    const r = Math.max(this.radius(x), 0.05 * this.mass);
+    const r = Math.max(this.radius(x), 1e-3 * this.mass);
     return r * Math.sqrt(r / (2 * this.mass));
   }
 
+  /** The end of the trustworthy spacetime (see ending()). */
   isSingular(x: Vec4) {
-    return this.radius(x) < 0.1 * this.mass;
+    return this.ending(x) !== null;
   }
 }

@@ -37,7 +37,16 @@ export class Ship {
     [0, 1, 0],
     [0, 0, 1],
   ];
+  /** The journey is over (see `fate` for how). */
   crushed = false;
+  /** How the journey ended: at the end of the trustworthy spacetime, or torn apart by tides. */
+  fate: 'innerHorizon' | 'singularity' | 'tidal' | null = null;
+
+  /** End the journey. */
+  end(fate: NonNullable<Ship['fate']>) {
+    this.crushed = true;
+    this.fate = fate;
+  }
 
   constructor(st: Spacetime, pos: Vec3, vel: Vec3, forward: Vec3, up: Vec3) {
     this.x = [0, ...pos];
@@ -139,20 +148,31 @@ export class Ship {
    */
   step(st: Spacetime, dTau: number, thrust: Thrust, maxSubsteps = 400) {
     if (this.crushed) return;
-    const sub = Math.min(maxSubsteps, Math.max(1, Math.ceil(dTau / (0.004 * st.timescale(this.x)))));
-    const h = dTau / sub;
-    for (let n = 0; n < sub; n++) {
+    // Substeps of a fixed fraction of the local timescale. If covering dTau would take more
+    // than maxSubsteps, this call covers less: deep in the hole the game's time runs slower,
+    // rather than the steps growing too big to be trusted.
+    let remaining = dTau;
+    for (let n = 0; n < maxSubsteps && remaining > 1e-15 * dTau; n++) {
       const acc = typeof thrust === 'function' ? thrust(this) : thrust;
-      const before = { x: this.x, u: this.u, e: this.e };
-      this.rk4(st, h, acc);
-      if (![...this.x, ...this.u].every(Number.isFinite)) {
-        Object.assign(this, before); // a blown-up step must never corrupt the ship
-        return;
+      let h = Math.min(remaining, 0.004 * st.timescale(this.x));
+      for (let tries = 0; ; tries++) {
+        const before = { x: this.x, u: this.u, e: this.e };
+        this.rk4(st, h, acc);
+        // Accept only a sane step: finite, and not leaping across a sizeable part of the
+        // scale on which the curvature changes (deep in a hole, the distance to the centre).
+        const leap = Math.hypot(this.x[1] - before.x[1], this.x[2] - before.x[2], this.x[3] - before.x[3]);
+        const scale = Math.max(Math.hypot(before.x[1], before.x[2], before.x[3]), st.timescale(before.x));
+        if ([...this.x, ...this.u].every(Number.isFinite) && leap <= 0.25 * scale) break;
+        Object.assign(this, before); // a bad step must never corrupt the ship: retry smaller
+        if (tries === 30) return;
+        h /= 2;
       }
+      remaining -= h;
       this.orthonormalise(st);
       this.tau += h;
       if (st.isSingular(this.x)) {
-        this.crushed = true;
+        const ending = (st as { ending?: (x: Vec4) => Ship['fate'] }).ending?.(this.x);
+        this.end(ending ?? 'singularity');
         return;
       }
     }

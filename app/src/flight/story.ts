@@ -68,8 +68,8 @@ const BEATS: Beat[] = [
   {
     id: 'inner',
     landmark: true,
-    past: (s) => s.innerHorizon > 0 && s.r < s.innerHorizon,
-    text: 'The inner horizon. In this idealised spinning hole, the whole future of the outside universe would arrive here at once. What really happens is unknown.',
+    past: (s) => s.innerHorizon > 1e-3 && s.r < s.innerHorizon + 0.25 * (s.horizon - s.innerHorizon),
+    text: 'The inner horizon is close. Light from outside is arriving ever bluer. In a real black hole, it is thought that nothing passes through it intact.',
   },
   { id: 'v50', past: (s) => s.speed > 0.5, text: 'Half the speed of light, relative to anyone holding still here.' },
   { id: 'v90', past: (s) => s.speed > 0.9, text: 'Ninety percent of light speed. The sky is crowding toward where you\'re heading.' },
@@ -82,7 +82,11 @@ const BEATS: Beat[] = [
     past: (s) => s.tidalG > 1,
     text: 'Tides stretch the ship by more than one g from nose to tail. Near a small black hole they grow lethal long before the horizon.',
   },
-  { id: 'tidesLethal', past: (s) => s.tidalG > 1000, text: 'Tidal stretching beyond a thousand g. No ship, and no body, survives this.' },
+  {
+    id: 'tidesStrain',
+    past: (s) => s.tidalG > 100,
+    text: 'Tidal stretching past a hundred g: the hull is straining. Near a thousand g it will fail.',
+  },
 ];
 
 export class Story {
@@ -110,11 +114,32 @@ export class Story {
   }
 }
 
-/** Words for the end, when the ship reaches the singularity. */
-export function epilogue(yourClock: string, farClock: string) {
-  return [
-    'The end of the journey.',
-    `Your clock read ${yourClock}. Far from the hole, ${farClock} had passed.`,
-    'Light from the outside universe kept reaching you until the very end.',
-  ];
+export type Fate = 'innerHorizon' | 'singularity' | 'tidal';
+
+/** Words for the end of the journey: a title, then lines. */
+export function epilogue(fate: Fate, yourClock: string, farClock: string) {
+  const clocks = `Your clock read ${yourClock}. By the far-away clock, ${farClock} had passed.`;
+  switch (fate) {
+    case 'innerHorizon':
+      return [
+        'The end of the journey: the inner horizon.',
+        clocks,
+        'In the exact equations of a spinning black hole you would cross it calmly, and go on past a ring-shaped singularity into other universes.',
+        'A real black hole is expected to be different. For anyone falling in long after it formed, this half of the inner horizon becomes an effective shock wave, crushing them in a vanishing instant (Marolf & Ori, 2012). Its other half, where all of the outside universe’s future arrives, becomes a singularity (mass inflation).',
+        'The flash is an illustration of that, not a calculation.',
+      ];
+    case 'tidal':
+      return [
+        'The end of the journey: torn apart by tides.',
+        clocks,
+        'The difference in gravity between the nose and tail of the ship passed a thousand g, and the hull failed. Near a small black hole this happens long before the horizon; near a giant one, only deep inside.',
+      ];
+    default:
+      return [
+        'The end of the journey: the singularity.',
+        clocks,
+        'Inside a black hole without spin, the singularity is not a place ahead of you but a moment: every future path reaches it.',
+        'Light from the outside universe kept reaching you until the very end.',
+      ];
+  }
 }

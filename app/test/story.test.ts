@@ -27,7 +27,7 @@ describe('landmark captions', () => {
       'Below the innermost',
       'Inside the ergosphere.',
       'You have crossed',
-      'The inner horizon.',
+      'The inner horizon',
     ]);
     // Nothing repeats while you stay put.
     expect(story.update({ ...base, r: 0.5, inErgosphere: true })).toEqual([]);

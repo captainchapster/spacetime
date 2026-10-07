@@ -221,6 +221,19 @@
         top: auto;
         bottom: 15vh;
       }
+      /* The inner-horizon white-out (illustrative). */
+      #flash {
+        position: fixed;
+        inset: 0;
+        background: radial-gradient(circle, #fff 0%, #eef4ff 40%, #c9dcff 100%);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 1.6s ease-in;
+        z-index: 4000;
+      }
+      #flash.show {
+        opacity: 1;
+      }
       #epilogue {
         position: fixed;
         inset: 0;
@@ -397,6 +410,7 @@
     </div>
     <div id="credits"></div>
     <div id="caption"></div>
+    <div id="flash"></div>
     <div id="epilogue">
       <h2></h2>
       <div class="lines"></div>
