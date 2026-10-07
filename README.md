@@ -1,5 +1,11 @@
 # Spacetime Sandbox
 
+![A spinning black hole with its accretion disk, the Milky Way lensed into a ring around it](docs/gallery/einstein-ring.jpg)
+
+*Every pixel is a light ray traced through the exact Kerr spacetime of a spinning black hole.
+Here the Milky Way is bent into a ring around the shadow, and the far side of the disk is
+lifted into view above and below it.*
+
 An interactive sandbox for exploring 4D spacetime, and how its geometry *is* gravity.
 Pick any three of (ct, x, y, z) to display, drop in bodies and light, and watch them follow
 geodesics through a curved metric.
@@ -18,6 +24,17 @@ Fly a ship around a real-scale rotating black hole. Every pixel is a light ray t
 backward from your eye through the exact Kerr spacetime on the GPU, so the shadow, photon
 ring, lensed far side of the disk, Einstein rings, Doppler beaming and redshift all come out
 of the ray tracing. None of it is painted on.
+
+| | |
+|:--:|:--:|
+| ![Skimming the accretion disk, with the sky blueshifted beside it](docs/gallery/skimming-the-disk.jpg) | ![The flattened shadow of a spinning hole, edged with a sliver of trapped light](docs/gallery/kerr-shadow.jpg) |
+| *Skimming the disk. Its side orbiting toward you is beamed white-hot, and the sky beside it is blueshifted.* | *Close to a fast-spinning hole the shadow flattens on one side, and a thin sliver of light orbiting the hole lines its edge.* |
+
+![Beside the disk's bright inner edge, the starfield blueshifted by motion and gravity](docs/gallery/blueshifted-sky.jpg)
+
+*Low over the disk, starlight is blueshifted and crowded together by your own motion and by gravity.*
+
+*Captured in the game's photo mode (press K).*
 
 **Controls:** drag to look · W/S thrust forward/back · A/D left/right · R/F up/down ·
 Q/E roll · Shift for ×10 thrust · H hover autopilot · B drop a beacon · `,` `.` time warp ·
