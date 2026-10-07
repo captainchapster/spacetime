@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Black Hole Flight</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+        color: #d6deeb;
+        font: 13px/1.45 system-ui, sans-serif;
+      }
+      #view {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+        cursor: grab;
+      }
+      #view:active {
+        cursor: grabbing;
+      }
+      .panel {
+        position: fixed;
+        padding: 10px 12px;
+        background: rgba(5, 8, 14, 0.72);
+        border: 1px solid rgba(120, 150, 200, 0.18);
+        border-radius: 8px;
+        pointer-events: none;
+        backdrop-filter: blur(4px);
+      }
+      #hud {
+        top: 12px;
+        left: 12px;
+        min-width: 300px;
+        max-width: 340px;
+        font-variant-numeric: tabular-nums;
+      }
+      #hud h1 {
+        margin: 0 0 6px;
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      #hud .row {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+      }
+      #hud .label {
+        color: #8494b0;
+      }
+      #hud .warn {
+        color: #ff8a7a;
+        margin-top: 6px;
+      }
+      .budget-label {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 8px;
+        font-size: 11px;
+        color: #8494b0;
+      }
+      .budget {
+        display: flex;
+        height: 6px;
+        margin-top: 3px;
+        border-radius: 3px;
+        overflow: hidden;
+        background: #1a2233;
+      }
+      .budget .time {
+        background: #6aa8ff;
+      }
+      .budget .space {
+        background: #ffb35c;
+      }
+      #nav {
+        position: fixed;
+        bottom: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        pointer-events: none;
+      }
+      #sas {
+        position: fixed;
+        bottom: 254px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 4px;
+        padding: 4px;
+        background: rgba(5, 8, 14, 0.68);
+        border: 1px solid rgba(120, 150, 200, 0.2);
+        border-radius: 8px;
+      }
+      #sas button {
+        position: relative;
+        width: 36px;
+        height: 32px;
+        border: 1px solid rgba(120, 150, 200, 0.25);
+        border-radius: 6px;
+        background: rgba(20, 28, 44, 0.9);
+        color: #c9d4e8;
+        font-size: 16px;
+        cursor: pointer;
+        padding: 0;
+      }
+      #sas button:hover {
+        background: rgba(40, 56, 88, 0.95);
+      }
+      #sas button.active {
+        background: #ffb347;
+        color: #1a1206;
+        border-color: #ffd08a;
+      }
+      #sas button.unavailable {
+        opacity: 0.35;
+      }
+      #sas .key {
+        position: absolute;
+        right: 3px;
+        bottom: 1px;
+        font-size: 8px;
+        opacity: 0.7;
+      }
+      #help {
+        bottom: 12px;
+        left: 12px;
+        width: 250px;
+        color: #8a97b0;
+        font-size: 12px;
+        pointer-events: auto;
+      }
+      #help .title {
+        color: #c9d4e8;
+        font-weight: 600;
+        cursor: pointer;
+        user-select: none;
+      }
+      #help.collapsed {
+        width: auto;
+      }
+      #help.collapsed .keys {
+        display: none;
+      }
+      #help .keys {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 2px 10px;
+        margin-top: 6px;
+      }
+      #help .keys b {
+        color: #c9d4e8;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      #hud .label[data-tip] {
+        pointer-events: auto;
+        cursor: help;
+      }
+      #tooltip {
+        position: fixed;
+        z-index: 10000; /* above lil-gui's panel */
+        max-width: 280px;
+        padding: 7px 9px;
+        background: rgba(12, 16, 26, 0.96);
+        border: 1px solid rgba(120, 150, 200, 0.35);
+        border-radius: 6px;
+        color: #d6deeb;
+        font: 12px/1.4 system-ui, sans-serif;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.12s;
+      }
+      #tooltip.show {
+        opacity: 1;
+      }
+      .lil-gui {
+        --name-width: 48%;
+      }
+      .lil-gui .lil-controller .lil-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #credits {
+        position: fixed;
+        bottom: 4px;
+        right: 12px;
+        max-width: 420px;
+        font-size: 9px;
+        color: rgba(160, 175, 200, 0.55);
+        text-align: right;
+        pointer-events: none;
+      }
+      #caption {
+        position: fixed;
+        top: 22px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: min(560px, 46vw);
+        text-align: center;
+        font: italic 17px/1.5 Georgia, 'Times New Roman', serif;
+        color: #e8eef8;
+        text-shadow: 0 0 10px #000, 0 0 3px #000;
+        opacity: 0;
+        transition: opacity 1.2s ease;
+        pointer-events: none;
+        z-index: 20;
+      }
+      #caption.show {
+        opacity: 1;
+      }
+      body.cinematic #caption {
+        top: auto;
+        bottom: 15vh;
+      }
+      #epilogue {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        background: rgba(0, 0, 0, 0.82);
+        color: #dfe6f2;
+        font: 17px/1.6 Georgia, 'Times New Roman', serif;
+        text-align: center;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 3s ease;
+        z-index: 5000; /* above the settings panel */
+      }
+      #epilogue.show {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      #epilogue h2 {
+        font-weight: normal;
+        letter-spacing: 0.08em;
+        margin: 0 0 12px;
+      }
+      #epilogue p {
+        margin: 2px 0;
+        max-width: 620px;
+        color: #b9c4d6;
+      }
+      #epilogue button {
+        margin-top: 22px;
+        padding: 8px 18px;
+        background: transparent;
+        color: #dfe6f2;
+        border: 1px solid rgba(220, 230, 245, 0.4);
+        border-radius: 6px;
+        font: 14px system-ui, sans-serif;
+        cursor: pointer;
+      }
+      body.cinematic #hud,
+      body.cinematic #nav,
+      body.cinematic #sas,
+      body.cinematic #help,
+      body.cinematic #credits {
+        display: none;
+      }
+      body.cinematic::before,
+      body.cinematic::after {
+        content: '';
+        position: fixed;
+        left: 0;
+        right: 0;
+        height: 10vh;
+        background: #000;
+        z-index: 10;
+        pointer-events: none;
+      }
+      body.cinematic::before {
+        top: 0;
+      }
+      body.cinematic::after {
+        bottom: 0;
+      }
+      body.photo #hud,
+      body.photo #nav,
+      body.photo #sas,
+      body.photo #help,
+      body.photo #credits,
+      body.photo #caption {
+        display: none;
+      }
+      /* Photo mode: everything outside the frame is dimmed; the guide never appears in the photo. */
+      #photo-guide {
+        position: fixed;
+        display: none;
+        box-shadow: 0 0 0 200vmax rgba(0, 0, 0, 0.55);
+        outline: 1px solid rgba(255, 255, 255, 0.35);
+        pointer-events: none;
+        z-index: 15;
+      }
+      body.photo #photo-guide {
+        display: block;
+      }
+      /* Letterbox: the bands are the picture's shadow, clipped to the frame. */
+      #photo-guide.letterboxed {
+        overflow: hidden;
+      }
+      #photo-guide .picture {
+        position: absolute;
+        left: 0;
+        right: 0;
+      }
+      #photo-guide.letterboxed .picture {
+        box-shadow: 0 0 0 100vmax #000;
+      }
+      #photo-guide .picture.thirds {
+        background:
+          linear-gradient(to right, transparent calc(33.333% - 0.5px), rgba(255, 255, 255, 0.22) calc(33.333% - 0.5px),
+            rgba(255, 255, 255, 0.22) calc(33.333% + 0.5px), transparent calc(33.333% + 0.5px),
+            transparent calc(66.667% - 0.5px), rgba(255, 255, 255, 0.22) calc(66.667% - 0.5px),
+            rgba(255, 255, 255, 0.22) calc(66.667% + 0.5px), transparent calc(66.667% + 0.5px)),
+          linear-gradient(to bottom, transparent calc(33.333% - 0.5px), rgba(255, 255, 255, 0.22) calc(33.333% - 0.5px),
+            rgba(255, 255, 255, 0.22) calc(33.333% + 0.5px), transparent calc(33.333% + 0.5px),
+            transparent calc(66.667% - 0.5px), rgba(255, 255, 255, 0.22) calc(66.667% - 0.5px),
+            rgba(255, 255, 255, 0.22) calc(66.667% + 0.5px), transparent calc(66.667% + 0.5px));
+      }
+      #photo-guide.flash {
+        animation: shutter 0.6s ease-out;
+      }
+      @keyframes shutter {
+        from {
+          background-color: rgba(255, 255, 255, 0.85);
+        }
+        to {
+          background-color: transparent;
+        }
+      }
+      #photo-status {
+        position: fixed;
+        left: 50%;
+        bottom: 28px;
+        transform: translateX(-50%);
+        padding: 8px 16px;
+        border-radius: 8px;
+        background: rgba(5, 8, 14, 0.8);
+        color: #dfe6f2;
+        font: 13px ui-monospace, Consolas, monospace;
+        opacity: 0;
+        transition: opacity 0.4s ease;
+        pointer-events: none;
+        z-index: 6000;
+      }
+      #photo-status.show {
+        opacity: 1;
+      }
+      #error {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        color: #ff9a8a;
+        font-size: 15px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <div id="hud" class="panel"></div>
+    <canvas id="nav"></canvas>
+    <div id="sas"></div>
+    <div id="help" class="panel collapsed">
+      <div class="title" onclick="this.parentElement.classList.toggle('collapsed')">? Controls</div>
+      <div class="keys">
+        <b>Drag</b><span>look around</span>
+        <b>W / S</b><span>thrust forward / back</span>
+        <b>A / D</b><span>thrust left / right</span>
+        <b>R / F</b><span>thrust up / down</span>
+        <b>Q / E</b><span>roll</span>
+        <b>Shift</b><span>×10 thrust</span>
+        <b>H</b><span>hover autopilot</span>
+        <b>1–8, 0</b><span>attitude modes (SAS)</span>
+        <b>B</b><span>drop a beacon</span>
+        <b>T</b><span>next target</span>
+        <b>V</b><span>look back</span>
+        <b>, / .</b><span>slower / faster time</span>
+        <b>P</b><span>pause</span>
+        <b>C</b><span>cinematic mode</span>
+        <b>K</b><span>photo mode (Space: still, G: GIF clip)</span>
+        <b>?</b><span>show / hide this</span>
+      </div>
+    </div>
+    <div id="credits"></div>
+    <div id="caption"></div>
+    <div id="epilogue">
+      <h2></h2>
+      <div class="lines"></div>
+      <button id="epilogue-restart">Begin again</button>
+    </div>
+    <div id="error"></div>
+    <script type="module" src="/src/flight/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.venv/
+__pycache__/
+.pytest_cache/
+
+# Real-sky data (npm run fetch-sky downloads and builds these)
+app/sky-src/
+app/public/sky/

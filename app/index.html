@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spacetime Sandbox</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #07090e;
+        color: #d6deeb;
+        font: 13px/1.45 system-ui, sans-serif;
+      }
+      #app {
+        position: fixed;
+        inset: 0;
+      }
+      #hud {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        max-width: 420px;
+        padding: 10px 12px;
+        background: rgba(10, 14, 22, 0.82);
+        border: 1px solid #1f2a3d;
+        border-radius: 8px;
+        pointer-events: none;
+      }
+      #hud h1 {
+        margin: 0 0 4px;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      #hud .stats {
+        font-variant-numeric: tabular-nums;
+        color: #9fb0cc;
+      }
+      #hud .desc {
+        margin-top: 6px;
+        color: #b9c4d6;
+      }
+      #hud .hint {
+        margin-top: 6px;
+        color: #7d8aa3;
+        font-size: 12px;
+      }
+      #message {
+        position: fixed;
+        bottom: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 8px 14px;
+        background: #3a1620;
+        border: 1px solid #7a2a3a;
+        border-radius: 6px;
+        opacity: 0;
+        transition: opacity 0.3s;
+        pointer-events: none;
+      }
+      .axis-label {
+        color: #c9d4e8;
+        font: italic 15px Georgia, serif;
+        text-shadow: 0 0 4px #000;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="hud">
+      <h1 id="hud-title"></h1>
+      <div class="stats" id="hud-stats"></div>
+      <div class="desc" id="hud-desc"></div>
+      <div class="hint">
+        Drag to orbit · scroll to zoom · right-drag to pan · Shift+click on the field plane to add a body · Space to pause
+      </div>
+    </div>
+    <div id="message"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
