@@ -411,6 +411,57 @@
       #photo-status.show {
         opacity: 1;
       }
+      #gate {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        background: #04060b;
+        z-index: 9000;
+      }
+      #gate .card {
+        max-width: 420px;
+        padding: 22px 22px 18px;
+        background: rgba(10, 14, 24, 0.95);
+        border: 1px solid rgba(140, 170, 220, 0.3);
+        border-radius: 10px;
+        color: #dfe6f2;
+        font: 15px/1.55 system-ui, sans-serif;
+      }
+      #gate h2 {
+        margin: 0 0 10px;
+        font: 600 19px system-ui, sans-serif;
+      }
+      #gate p {
+        margin: 0 0 10px;
+        color: #b9c4d6;
+      }
+      #gate .buttons {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+        margin-top: 16px;
+      }
+      #gate button,
+      #gate a {
+        padding: 9px 14px;
+        border-radius: 7px;
+        font: 600 14px system-ui, sans-serif;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      #gate button {
+        background: #2d5fa8;
+        border: 1px solid #4a7cc4;
+        color: #fff;
+      }
+      #gate a.secondary {
+        background: transparent;
+        border: 1px solid rgba(220, 230, 245, 0.35);
+        color: #dfe6f2;
+      }
       #error {
         position: fixed;
         inset: 0;
@@ -458,6 +509,10 @@
       <button id="epilogue-restart">Begin again</button>
     </div>
     <div id="error"></div>
-    <script type="module" src="/src/flight/main.ts"></script>
+    <!-- Phones and tablets are warned first; the simulation only loads once they go ahead. -->
+    <script type="module">
+      import { desktopGate } from '/src/flight/gate.ts';
+      desktopGate().then(() => import('/src/flight/main.ts'));
+    </script>
   </body>
 </html>

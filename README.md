@@ -8,6 +8,8 @@ lifted into view above and below it.*
 
 **Fly it in your browser: [captainchapster.github.io/spacetime/flight.html](https://captainchapster.github.io/spacetime/flight.html)**
 (a desktop browser with WebGL2: recent Chrome, Edge, Firefox or Safari; keyboard and mouse).
+On a touch-only phone or tablet, a notice explains this first. The simulation loads only if
+the visitor chooses to continue, and the choice is remembered.
 The 4D sandbox is at [captainchapster.github.io/spacetime](https://captainchapster.github.io/spacetime/).
 Every push to `main` rebuilds and republishes the site (`.github/workflows/pages.yml`).
 
