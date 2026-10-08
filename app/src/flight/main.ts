@@ -155,7 +155,7 @@ const settings = {
   captions: true,
   cinematic: false,
   /** Show the transmission from home. */
-  feed: true,
+  feed: false,
   drift: false,
   grain: 0,
   vignette: 1,

@@ -92,7 +92,7 @@ can even raise the orbit's energy. `test/decay.test.ts` checks the model against
 integrations at four spins, equatorial and polar. Near a giant hole the brake is a fictional engine: tens of g
 for about a day and a half.
 
-**Transmission from home** (M, or the Transmission menu). A semi-transparent monitor under
+**Transmission from home** (off by default: press M, or Transmission from home → Show the feed). A semi-transparent monitor under
 the readouts shows a live video feed from home, played as it would actually arrive.
 - *How fast it plays:* home's signal reaches you shifted in frequency by g (received over
   emitted, traced with real light rays), so its frames arrive g times as fast as your own
