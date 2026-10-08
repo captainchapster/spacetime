@@ -1,5 +1,8 @@
 import { CELL_ANGLE, STAR_GRID, type V3, binStars } from '../physics/sky';
 
+/** Where the sky assets are served from (the site may live below the domain's root). */
+const SKY = `${import.meta.env.BASE_URL}sky/`;
+
 /** Grid margin (radians): every star within this of a direction is listed in its cell. */
 export const STAR_MARGIN = 0.6 * CELL_ANGLE;
 
@@ -31,15 +34,15 @@ export const DATA_W = 4096;
 export async function loadRealSky(): Promise<RealSkyData | null> {
   let meta: { gamma: number; width: number; credits: string[] };
   try {
-    const res = await fetch('/sky/sky.json');
+    const res = await fetch(`${SKY}sky.json`);
     if (!res.ok) return null;
     meta = await res.json();
   } catch {
     return null;
   }
   const image = new Image();
-  image.src = '/sky/milkyway.webp';
-  const [buf] = await Promise.all([fetch('/sky/stars.bin').then((r) => r.arrayBuffer()), image.decode()]);
+  image.src = `${SKY}milkyway.webp`;
+  const [buf] = await Promise.all([fetch(`${SKY}stars.bin`).then((r) => r.arrayBuffer()), image.decode()]);
   const raw = new Float32Array(buf);
   const n = raw.length / 5;
   const dirs: V3[] = [];

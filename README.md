@@ -6,6 +6,11 @@
 Here the Milky Way is bent into a ring around the shadow, and the far side of the disk is
 lifted into view above and below it.*
 
+**Fly it in your browser: [captainchapster.github.io/spacetime/flight.html](https://captainchapster.github.io/spacetime/flight.html)**
+(a desktop browser with WebGL2: recent Chrome, Edge, Firefox or Safari; keyboard and mouse).
+The 4D sandbox is at [captainchapster.github.io/spacetime](https://captainchapster.github.io/spacetime/).
+Every push to `main` rebuilds and republishes the site (`.github/workflows/pages.yml`).
+
 An interactive sandbox for exploring 4D spacetime, and how its geometry *is* gravity.
 Pick any three of (ct, x, y, z) to display, drop in bodies and light, and watch them follow
 geodesics through a curved metric.
@@ -239,6 +244,9 @@ view, which shows aberration. Two caveats:
     step count.
 - Adaptive resolution (Camera menu, on by default) traces at a lower resolution when frames
   take longer than 1/40 s, never above Render scale. The physics is the same, only coarser.
+  - Every change of resolution re-samples every star, which shows as a jitter where lensing
+    crowds them together. So it changes only on sustained evidence: down after 3 slow
+    seconds in a row, up after 5 fast ones, and never back up within 20 s of stepping down.
 - The navball is repainted only when it actually turns, and without per-pixel trigonometry.
   It had been the largest CPU cost, more than all the physics.
 - A new picture is traced only when there's something new to see. While paused, the view is

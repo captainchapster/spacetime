@@ -641,7 +641,7 @@ function frame(now: number) {
   const t0 = performance.now();
   if (fresh) renderer.render(params);
   if (fresh && key === null) adaptResolution();
-  else adaptSince = 0; // paused or ended: start timing afresh when running again
+  else adaptSince = slowSeconds = fastSeconds = 0; // paused or ended: start afresh when running again
   const t1 = performance.now();
   drawInstruments();
   timings.render = t1 - t0;
@@ -680,11 +680,17 @@ function setTraceScale(v: number) {
 }
 
 /**
- * Adaptive resolution: once a second, if frames have averaged slower than 40 per second,
- * trace at 85% of the resolution; if faster than 55, step back up toward Render scale.
+ * Adaptive resolution. Every change of resolution re-samples every star, which shows as a
+ * jitter where lensing crowds them together, so it changes only on sustained evidence:
+ * down to 85% after 3 seconds in a row slower than 40 frames per second; back up by 10%
+ * after 5 seconds in a row faster than 58, and never within 20 seconds of stepping down
+ * (so it can't ping-pong on ordinary frame-time noise).
  */
 let adaptSince = 0;
 let adaptFrames = 0;
+let slowSeconds = 0;
+let fastSeconds = 0;
+let steppedDownAt = -Infinity;
 function adaptResolution() {
   if (!settings.adaptiveRes) return;
   const now = performance.now();
@@ -694,8 +700,16 @@ function adaptResolution() {
   const mean = (now - adaptSince) / 1000 / adaptFrames; // real seconds per frame
   adaptSince = now;
   adaptFrames = 0;
-  if (mean > 1 / 40) setTraceScale(Math.max(0.3, Math.min(settings.renderScale, renderer.renderScale * 0.85)));
-  else if (mean < 1 / 55 && renderer.renderScale < settings.renderScale) setTraceScale(Math.min(settings.renderScale, renderer.renderScale * 1.1));
+  slowSeconds = mean > 1 / 40 ? slowSeconds + 1 : 0;
+  fastSeconds = mean < 1 / 58 ? fastSeconds + 1 : 0;
+  if (slowSeconds >= 3 && renderer.renderScale > 0.3) {
+    setTraceScale(Math.max(0.3, Math.min(settings.renderScale, renderer.renderScale * 0.85)));
+    steppedDownAt = now;
+    slowSeconds = fastSeconds = 0;
+  } else if (fastSeconds >= 5 && now - steppedDownAt > 20000 && renderer.renderScale < settings.renderScale) {
+    setTraceScale(Math.min(settings.renderScale, renderer.renderScale * 1.1));
+    slowSeconds = fastSeconds = 0;
+  }
 }
 
 /** The last frame's view, while nothing should change it (see frame()); null when running. */

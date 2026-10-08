@@ -29,6 +29,21 @@
         border-radius: 8px;
         pointer-events: none;
       }
+      #fly {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        padding: 10px 16px;
+        background: rgba(10, 14, 22, 0.88);
+        border: 1px solid #3a4a66;
+        border-radius: 8px;
+        color: #e6ecf7;
+        font: 600 14px system-ui, sans-serif;
+        text-decoration: none;
+      }
+      #fly:hover {
+        border-color: #7fa8e6;
+      }
       #hud h1 {
         margin: 0 0 4px;
         font-size: 14px;
@@ -78,6 +93,7 @@
       </div>
     </div>
     <div id="message"></div>
+    <a id="fly" href="flight.html">Fly a black hole →</a>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
