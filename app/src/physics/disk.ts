@@ -19,6 +19,77 @@ export function circularOrbit(r: number, a: number) {
   };
 }
 
+/**
+ * Speed of a prograde circular orbit relative to the local ZAMO (Bardeen, Press & Teukolsky
+ * 1972), M = 1.
+ */
+export function circularSpeed(r: number, a: number) {
+  const sr = Math.sqrt(r);
+  return (r * r - 2 * a * sr + a * a) / (Math.sqrt(r * r - 2 * r + a * a) * (r * sr + a));
+}
+
+/**
+ * Retro-brake (proper acceleration against the motion, units 1/M) that winds a prograde
+ * circular orbit at r0 down to the ISCO in about `turns` orbits.
+ *
+ * For gentle braking the orbit stays nearly circular and shrinks slowly. A brake A against
+ * the motion (relative to the ZAMO) removes angular momentum at dL/dτ = −Aγ√g_φφ, and turns
+ * accrue at Ωu^t/2π = Ωγ/2πα per unit proper time (α the lapse), so
+ *   turns = (1/A) ∫ Ω |dL/dr| / (2π α √g_φφ) dr   from the ISCO to r0.
+ * (Angular momentum, not energy: inside the ergosphere, where a fast-spinning hole's ISCO
+ * lies, frame dragging outpaces the ship, and braking there can even raise the energy.)
+ * Braking hard enough to matter is a little faster than this slow-decay estimate; the
+ * factor is fitted to full integrations (test/decay.test.ts checks them across spins).
+ */
+export function decayBrake(a: number, r0: number, turns: number) {
+  const isco = iscoRadius(a);
+  const n = 400;
+  let integral = 0;
+  for (let i = 0; i < n; i++) {
+    const r = isco + ((i + 0.5) / n) * (r0 - isco);
+    const h = 1e-4 * r;
+    const dLdr = (circularOrbit(r + h, a).L - circularOrbit(r - h, a).L) / (2 * h);
+    const delta = r * r - 2 * r + a * a;
+    const big = (r * r + a * a) ** 2 - a * a * delta;
+    const alpha = Math.sqrt((r * r * delta) / big);
+    const sqrtGphiphi = Math.sqrt(big) / r;
+    integral += (circularOrbit(r, a).Omega * Math.abs(dLdr)) / (2 * Math.PI * alpha * sqrtGphiphi);
+  }
+  integral *= (r0 - isco) / n;
+  return (DECAY_FIT * integral) / turns;
+}
+const DECAY_FIT = 1;
+
+/**
+ * Innermost stable spherical orbit for polar orbits (zero angular momentum about the spin
+ * axis), M = 1. With L_z = 0 the radial potential is
+ *   R(r) = E²[(r² + a²)² − Δa²] − Δ(r² + Q),
+ * which is linear in E² and the Carter constant Q. A spherical orbit needs R = R′ = 0, which
+ * fixes both; it is stable while R″ < 0, so the innermost one is where R″ = 0. Equals 6
+ * without spin; about 5.3 for a near-extremal hole.
+ */
+export function polarIsso(a: number) {
+  const curvature = (r: number) => {
+    const d = r * r - 2 * r + a * a;
+    const dd = 2 * r - 2;
+    const [A1, B1, C1] = [(r * r + a * a) ** 2 - d * a * a, d * r * r, d];
+    const [A2, B2, C2] = [4 * r * (r * r + a * a) - dd * a * a, dd * r * r + 2 * r * d, dd];
+    const [A3, B3, C3] = [12 * r * r + 2 * a * a, 2 * r * r + 4 * r * dd + 2 * d, 2];
+    const E2 = (B2 - (C2 * B1) / C1) / (A2 - (C2 * A1) / C1);
+    const Q = (E2 * A1 - B1) / C1;
+    return E2 * A3 - B3 - C3 * Q;
+  };
+  // Stable (R″ < 0) far out, unstable inside: bisect for the change.
+  let lo = 1 + Math.sqrt(1 - a * a) + 1.5;
+  let hi = 12;
+  for (let i = 0; i < 80; i++) {
+    const mid = (lo + hi) / 2;
+    if (curvature(mid) < 0) hi = mid;
+    else lo = mid;
+  }
+  return (lo + hi) / 2;
+}
+
 /** Prograde ISCO radius for spin a (M = 1). */
 export function iscoRadius(a: number) {
   const z1 = 1 + Math.cbrt(1 - a * a) * (Math.cbrt(1 + a) + Math.cbrt(1 - a));

@@ -112,16 +112,17 @@ export class Ship {
 
   /**
    * Turn the nose toward direction `dir` (any 4-vector; its part orthogonal to u is used),
-   * by at most `maxAngle` radians, rolling as little as possible.
+   * by at most `maxAngle` radians, rolling as little as possible. Returns the angle still
+   * left to turn (0 once on target).
    */
-  turnToward(st: Spacetime, dir: Vec4, maxAngle: number) {
+  turnToward(st: Spacetime, dir: Vec4, maxAngle: number): number {
     const g = st.metric(this.x);
     const unit = (v: Vec4) => {
       const n = Math.sqrt(Math.max(inner(g, v, v), 0));
       return n > 1e-12 ? (v.map((c) => c / n) as Vec4) : null;
     };
     const target = unit(dir.map((c, k) => c + inner(g, dir, this.u) * this.u[k]) as Vec4);
-    if (!target) return;
+    if (!target) return 0;
     const f = this.e[2];
     const cos = Math.max(-1, Math.min(1, inner(g, f, target)));
     const angle = Math.acos(cos);
@@ -134,6 +135,7 @@ export class Ship {
     // Keep the current "up" unless the nose is swinging onto it; then use the old nose.
     const up = Math.abs(inner(g, next, this.e[1])) < 0.98 ? this.e[1] : f.map((c) => -c * Math.sign(inner(g, next, this.e[1]))) as Vec4;
     this.orient(st, next, up);
+    return Math.max(0, angle - maxAngle);
   }
 
   /** The ship's current forward and up axes, for re-applying later with `orient`. */

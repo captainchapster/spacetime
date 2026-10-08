@@ -1,8 +1,9 @@
 import GUI from 'lil-gui';
 import { blackbodyRgb } from '../physics/blackbody';
-import { type DiskModel, diskModel } from '../physics/disk';
+import { type DiskModel, decayBrake, diskModel, iscoRadius, polarIsso } from '../physics/disk';
+import { inner } from '../physics/linalg';
 import { Kerr } from '../physics/metrics/kerr';
-import { type LockMode, type Reference, alignPlatform, bodyDirection, lockDirection, navState, worldToShip } from '../physics/nav';
+import { type LockMode, type Reference, type V3, alignPlatform, bodyDirection, lockDirection, navState, worldToShip } from '../physics/nav';
 import { Ship, type Vec3 } from '../physics/ship';
 import {
   formatDistance,
@@ -45,11 +46,22 @@ interface Start {
   label: string;
   /** Position given as (r, polar angle from +z in degrees, azimuth in degrees). */
   r: number;
+  /**
+   * If set, r is this far outside the innermost stable orbit instead (the equatorial ISCO,
+   * or for a polar orbit the polar one), so the start suits any spin.
+   */
+  fromIsco?: number;
   theta: number;
   phi: number;
   hover: boolean;
-  /** Initial velocity: none, or a circular-ish orbit about the given axis. */
-  orbit?: 'equatorial' | 'polar';
+  /**
+   * Initial velocity: none, or a circular-ish orbit about the given axis. 'decay' is a
+   * prograde orbit with the retro-brake on, so it winds down and spirals in; 'polarDecay'
+   * the same over the poles.
+   */
+  orbit?: 'equatorial' | 'polar' | 'decay' | 'polarDecay';
+  /** Attitude mode to start in (default: hold). */
+  attitude?: LockMode;
   /** Drop a beacon just ahead of the ship at the start. */
   beacon?: boolean;
 }
@@ -60,6 +72,27 @@ const STARTS: Record<string, Start> = {
   pole: { label: 'Above the pole', r: 30, theta: 2, phi: -90, hover: true },
   polar: { label: 'Polar orbit (14M)', r: 14, theta: 90, phi: -90, hover: false, orbit: 'polar' },
   plunge: { label: 'Plunge from 40M', r: 40, theta: 80, phi: -90, hover: false },
+  spiral: {
+    label: 'Spiral in: decaying orbit',
+    r: 0,
+    fromIsco: 6,
+    theta: 85,
+    phi: -90,
+    hover: false,
+    orbit: 'decay',
+    attitude: 'radialIn',
+  },
+  drop: { label: 'Drop in: from rest, same spot', r: 0, fromIsco: 6, theta: 85, phi: -90, hover: false, attitude: 'radialIn' },
+  spiralPolar: {
+    label: 'Spiral in: decaying polar orbit',
+    r: 0,
+    fromIsco: 6,
+    theta: 90,
+    phi: -90,
+    hover: false,
+    orbit: 'polarDecay',
+    attitude: 'radialIn',
+  },
   distant: { label: 'Far out (600M)', r: 600, theta: 82, phi: -90, hover: true },
 };
 
@@ -103,6 +136,10 @@ const settings = {
   thrustG: 1,
   logWarp: 3,
   hover: true,
+  /** Retro-brake: thrust gently against the orbital motion, so the orbit winds down. */
+  brake: false,
+  /** Brake strength, as the number of orbits it takes to wind down to the ISCO. */
+  brakeTurns: 10,
   sound: true,
   volume: 0.6,
   captions: true,
@@ -169,6 +206,29 @@ let captionTimers: number[] = [];
 let captionNow: { landmark: boolean; since: number } | null = null;
 /** Where the hover autopilot holds the ship (re-set whenever the pilot stops thrusting). */
 let hoverAnchor: Vec3 | null = null;
+/** Retro-brake strength (proper acceleration, units 1/M), and whether it fired last step. */
+let brakeA = 0;
+let braking = false;
+let wasBraking = false;
+/** Whether the braked orbit is polar (rather than equatorial and prograde). */
+let brakePolar = false;
+
+/** Where the retro-brake stops: the innermost stable orbit of the kind being flown. */
+function brakeFloor() {
+  return brakePolar ? polarIsso(hole.a) : iscoRadius(hole.a);
+}
+
+/**
+ * Set the retro-brake so the orbit winds down from where the ship is now to the innermost
+ * stable orbit in about settings.brakeTurns orbits (see decayBrake). A polar orbit feels
+ * the spin far less, so it's treated like a non-spinning hole's orbit at the same height
+ * above its floor (checked against full integrations in test/decay.test.ts).
+ */
+function updateBrake() {
+  const floor = brakeFloor();
+  const r = Math.max(hole.radius(ship.x), floor + 0.05);
+  brakeA = brakePolar ? decayBrake(0, 6 + (r - floor), settings.brakeTurns) : decayBrake(hole.a, r, settings.brakeTurns);
+}
 /** The coordinate directions the reaction wheels keep the ship pointing (attitude hold). */
 let heldAttitude: ReturnType<Ship['attitude']>;
 /** Luminance of a blackbody at the disk's peak temperature: the exposure reference. */
@@ -202,19 +262,25 @@ function resetShip() {
   const ph = (s.phi * Math.PI) / 180;
   // Kerr–Schild position for spheroidal radius r at angles (θ, φ).
   const a = hole.a;
-  const rho = Math.sqrt(s.r * s.r + a * a);
-  const pos: Vec3 = [rho * Math.sin(th) * Math.cos(ph), rho * Math.sin(th) * Math.sin(ph), s.r * Math.cos(th)];
+  brakePolar = s.orbit === 'polarDecay';
+  const r0 = s.fromIsco !== undefined ? brakeFloor() + s.fromIsco : s.r;
+  const rho = Math.sqrt(r0 * r0 + a * a);
+  const pos: Vec3 = [rho * Math.sin(th) * Math.cos(ph), rho * Math.sin(th) * Math.sin(ph), r0 * Math.cos(th)];
   const n = Math.hypot(...pos);
   const forward: Vec3 = [-pos[0] / n, -pos[1] / n, -pos[2] / n];
   const up: Vec3 = Math.abs(forward[2]) > 0.95 ? [0, 1, 0] : [0, 0, 1];
   let vel: Vec3 = [0, 0, 0];
-  if (s.orbit === 'polar') vel = [0, 0, Math.sqrt(1 / s.r) * 0.98];
-  if (s.orbit === 'equatorial') {
-    const om = 1 / (s.r ** 1.5 + a);
+  if (s.orbit === 'polar') vel = [0, 0, Math.sqrt(1 / r0) * 0.98];
+  if (s.orbit === 'polarDecay') vel = [0, 0, Math.sqrt(1 / r0)]; // over the poles, near circular
+  if (s.orbit === 'equatorial' || s.orbit === 'decay') {
+    const om = 1 / (r0 ** 1.5 + a);
     vel = [-om * pos[1], om * pos[0], 0];
   }
   ship = new Ship(hole, pos, vel, forward, up);
   settings.hover = s.hover;
+  settings.brake = s.orbit === 'decay' || s.orbit === 'polarDecay';
+  updateBrake();
+  settings.attitude = s.attitude ?? 'hold';
   hoverAnchor = null;
   heldAttitude = ship.attitude();
   beacons = new Beacons(hole);
@@ -286,12 +352,23 @@ tip(
       resetShip();
       refresh();
     }),
-  'Where to begin: hovering beside the disk or above a pole, in a polar orbit, released to plunge in, far away, or the beacon experiment (a blinking beacon dropped into the hole).',
+  'Where to begin: hovering beside the disk or above a pole, in a polar orbit, released to plunge in, far away, or the beacon experiment (a blinking beacon dropped into the hole). To compare ways in: "Spiral in" starts on an orbit that winds down until it plunges, like the disk\'s gas; "Drop in" starts at the same spot from rest and falls straight in; the polar spiral winds down over the poles instead.',
 );
 tip(fShip.add({ restart: resetShip }, 'restart').name('Restart here'), 'Start the chosen scenario again.');
 tip(
   fShip.add(settings, 'thrustG', 0.01, 1e4, 0.01).name('Engine (g)'),
   'Thrust in g (Earth gravities). Hovering near a supermassive hole takes tens of g or more, so fictional engines are allowed. Shift multiplies it by 10.',
+);
+tip(
+  fShip.add(settings, 'brake').name('Retro-brake'),
+  'Thrust gently against your orbital motion, so the orbit winds down and you spiral in. In reality orbits decay only by gravitational waves, far too slowly to watch, so this stands in for them (a fictional engine near a giant hole). It cuts out at the ISCO, below which nothing can orbit anyway.',
+);
+tip(
+  fShip
+    .add(settings, 'brakeTurns', 3, 40, 1)
+    .name('Brake: orbits to ISCO')
+    .onChange(() => updateBrake()),
+  'Brake strength, as about how many orbits it takes to wind down from here to the ISCO.',
 );
 tip(
   fShip.add(settings, 'hover').name('Hover autopilot').onChange(() => (hoverAnchor = null)),
@@ -568,6 +645,21 @@ function simulate(dtReal: number, run: boolean, piloted: boolean) {
         : s.hoverThrust(hole, Math.max(4, 0.3 * r ** 1.5), hoverAnchor ?? undefined);
       if (hold) acc = acc.map((c, i) => c + hold[i]) as Vec3;
     }
+    // Retro-brake: against the motion relative to the local co-rotating (ZAMO) observer,
+    // down to the ISCO. Below it nothing can orbit, and gravity alone finishes the job.
+    braking = false;
+    if (settings.brake && !manual && hole.radius(s.x) > brakeFloor()) {
+      const d = lockDirection(hole, s, 'retrograde', undefined, 'zamo');
+      if (d) {
+        const g = hole.metric(s.x);
+        const c = s.e.map((e) => inner(g, d, e));
+        const n = Math.hypot(...c);
+        if (n > 0) {
+          acc = acc.map((q, i) => q + (brakeA * c[i]) / n) as Vec3;
+          braking = true;
+        }
+      }
+    }
     lastAcc = acc;
     return acc;
   };
@@ -589,13 +681,32 @@ function simulate(dtReal: number, run: boolean, piloted: boolean) {
     showCaption({ text: 'Navigation reference lost: the autopilot has dropped back to holding attitude.', landmark: false });
   } else if (settings.attitude !== 'free') {
     const aim = lockDirection(hole, ship, settings.attitude, targetPosition(), settings.reference);
-    if (aim) ship.turnToward(hole, aim, SLEW_RATE * dtReal);
+    // Slew at the reaction wheels' rate, plus however far the target itself moved since
+    // last frame (measured in the ship's own non-rotating frame). So a lock catches up at a
+    // steady rate and then keeps up at any time warp: however fast the target swings round on
+    // screen, in the ship's own time it turns slowly (about once an orbit), which real
+    // wheels track with ease.
+    if (aim) {
+      const now = bodyDirection(hole, ship, aim);
+      const swing = now && lastAim ? Math.acos(Math.max(-1, Math.min(1, now[0] * lastAim[0] + now[1] * lastAim[1] + now[2] * lastAim[2]))) : 0;
+      ship.turnToward(hole, aim, SLEW_RATE * dtReal + swing);
+      lastAim = bodyDirection(hole, ship, aim);
+    }
     heldAttitude = ship.attitude();
   }
   // The navigation computer keeps the gyro platform aligned while it has a reference.
   alignPlatform(hole, ship, settings.reference);
   feltG = geometricToG(Math.hypot(...lastAcc), settings.mass);
   beacons.advanceTo(ship.x[0]);
+  if (wasBraking && !braking && settings.brake && !ship.crushed && hole.radius(ship.x) <= brakeFloor()) {
+    showCaption({
+      text: brakePolar
+        ? 'Retro-brake off. Below the innermost stable polar orbit no braking is needed: gravity alone spirals you in over the poles from here.'
+        : 'Retro-brake off. Below the innermost stable orbit no braking is needed: gravity alone spirals you in from here, just as it does the disk\'s gas.',
+      landmark: false,
+    });
+  }
+  wasBraking = braking;
   // A real hull has a breaking point: the tidal stretch from nose to tail.
   const tidal = tidalAcceleration(Math.max(hole.radius(ship.x), 1e-3), SHIP_LENGTH_M, gravitationalRadius(settings.mass));
   if (!ship.crushed && tidal > HULL_LIMIT_G) ship.end('tidal');
@@ -670,7 +781,11 @@ function lockAvailable(mode: LockMode) {
   return lockDirection(hole, ship, mode, targetPosition(), settings.reference) !== null;
 }
 
+/** Where the lock's target was last frame, along the ship's axes (to track its motion). */
+let lastAim: V3 | null = null;
+
 function setAttitude(mode: LockMode) {
+  lastAim = null;
   if (mode !== 'target' && !lockAvailable(mode)) {
     refresh(); // undo a GUI selection
     return;
@@ -683,6 +798,7 @@ function setAttitude(mode: LockMode) {
 
 /** The pilot turned by hand: a lock lets go and holds wherever they're now pointing. */
 function pilotTurned() {
+  lastAim = null;
   heldAttitude = ship.attitude();
   if (settings.attitude !== 'free' && settings.attitude !== 'hold') {
     settings.attitude = 'hold';
@@ -806,7 +922,7 @@ function updateHud() {
       ? row('Speed vs stationary', `${rel.speed.toFixed(4)} c · γ ${rel.gamma.toFixed(3)}`)
       : row('Speed vs stationary', 'nothing can be stationary here'),
     grav !== null ? row('Gravity to hover', `${geometricToG(grav, M).toPrecision(3)} g`) : '',
-    row('Felt acceleration', `${feltG.toPrecision(3)} g${settings.hover ? ' (autopilot)' : ''}`),
+    row('Felt acceleration', `${feltG.toPrecision(3)} g${settings.hover ? ' (autopilot)' : braking ? ' (retro-brake)' : ''}`),
     row('Attitude', SAS_MODES.find((m) => m.mode === settings.attitude)?.short ?? ''),
     targetPosition()
       ? row(

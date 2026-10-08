@@ -40,6 +40,53 @@ of the ray tracing. None of it is painted on.
 Q/E roll · Shift for ×10 thrust · H hover autopilot · B drop a beacon · `,` `.` time warp ·
 P pause.
 
+**Ways in** (Ship → Start). The first two begin at the same spot, 6M outside the ISCO and
+just above the disk, with the nose locked on the hole. They differ only in how you move:
+- *Spiral in: decaying orbit.* You start on a prograde circular orbit with the retro-brake
+  on, so the orbit winds down over about ten turns. At the ISCO the brake cuts out, because
+  below it nothing can orbit: gravity alone whirls you round a final turn or two and in,
+  exactly as the disk's gas falls.
+  - Moving with the gas, the disk looks far less lopsided than it does from rest.
+  - Your own speed, reaching over half the speed of light, crowds the sky ahead and blueshifts it.
+- *Drop in: from rest, same spot.* You fall with no angular momentum.
+  - Even so, the hole's spin drags you round as you near it: frame dragging, with no orbit
+    involved.
+  - You see the disk's gas sweep past at over half the speed of light, beamed bright on one
+    side and dimmed on the other.
+
+- *Spiral in: decaying polar orbit.* The same winding-down, but over the poles, starting 6M
+  outside the innermost stable *polar* orbit.
+  - That orbit is further out than the prograde ISCO: 5.36M for spin 0.95, against 1.94M.
+    A polar orbit gets no help from the spin, so it can't hold on as close in. It's found
+    from the zero-angular-momentum spherical orbits of Kerr: 6M without spin, 5.27M at the
+    extreme.
+  - The brake is gentler, about 2.5 g near Gargantua. Each orbit cuts through the disk's
+    plane twice, and the ship passes through the gas untouched (a real disk would not be
+    so kind).
+  - The orbit's plane is slowly turned by the spin (Lense–Thirring precession), and the
+    final plunge comes in over the poles.
+
+![Plunging on the decaying orbit: the whole sky gathered into a window behind you, the disk edge-on](docs/gallery/spiral-plunge.jpg)
+
+*Spiralling in: at over half the speed of light, with the hole bending light around you,
+the whole outside universe gathers behind you as you plunge into the dark.*
+
+![Below the horizon: the outside universe squeezed into a blueshifted bowl, the Milky Way twisted by the spin](docs/gallery/below-the-horizon.jpg)
+
+*Below the horizon. The outside universe shrinks to a bowl above and behind you,
+blueshifted, its Milky Way twisted by the spinning hole. The two smudges near the bottom
+are the Magellanic Clouds.*
+
+Real orbits decay only by gravitational waves, far too slowly to watch, so the retro-brake
+stands in for that loss. It thrusts against your motion relative to the local co-rotating
+observer (ZAMO). Its strength (Ship → Brake: orbits to ISCO) is set from a slow-decay model
+of how fast braking removes angular momentum (for a polar orbit, the non-spinning hole's
+version at the same height above its innermost stable orbit). That model tracks angular momentum rather
+than energy, because inside the ergosphere, where a fast-spinning hole's ISCO lies, braking
+can even raise the orbit's energy. `test/decay.test.ts` checks the model against full
+integrations at four spins, equatorial and polar. Near a giant hole the brake is a fictional engine: tens of g
+for about a day and a half.
+
 **Photo mode** (K, or Camera → Photo mode). Time stops and the instruments disappear. A
 guide shows exactly what will be captured, with rule-of-thirds lines. Choose:
 - the frame: screen, 16:9, 1.85:1, 2.39:1 anamorphic, 2.76:1, 3:2, square, 4:5 or 9:16.
@@ -143,8 +190,11 @@ the same at the game's step size and a much finer one.
 | 8 | Target (T cycles beacons) |
 | 0 | Free gyroscope |
 
-Reaction wheels slew the nose onto the chosen direction. Turning by hand drops you back
-to Hold.
+Reaction wheels slew the nose onto the chosen direction, at a steady rate plus however far
+the target itself moved since the last frame. So a lock catches up smoothly and then keeps
+up at any time warp: however fast the target swings round on screen, in the ship's own time
+it turns slowly (radial in turns once an orbit), which real wheels track easily. Turning by
+hand drops you back to Hold.
 
 The locks aim where the navball shows each direction, so a lock puts its marker dead
 centre on the ball. At speed that differs from where the same direction appears in the 3D
