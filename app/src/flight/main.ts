@@ -920,7 +920,10 @@ function drawInstruments() {
     metresPerM: gravitationalRadius(settings.mass),
     landmarks: [
       ['ergosphere', 2],
-      ['photon orbit', 2 * (1 + Math.cos((2 / 3) * Math.acos(-a)))],
+      // A spinning hole has a photon *region*: light can circle it anywhere from the prograde
+      // orbit (closest) out to the retrograde one, where the "photon region" caption fires.
+      ['photon region', 2 * (1 + Math.cos((2 / 3) * Math.acos(a)))],
+      ['inner photon', 2 * (1 + Math.cos((2 / 3) * Math.acos(-a)))],
       ['ISCO', disk.rIn],
       ['disk edge', disk.rOut],
     ],
@@ -1329,7 +1332,10 @@ function nextCaption() {
     captionNow = null;
     return;
   }
-  const hold = captionQueue.length ? 3800 : 6000;
+  // On screen long enough to read: about 1.5 s plus 65 ms a character (roughly 180 words a
+  // minute), between 4 and 16 s; a little less when others are waiting their turn.
+  const reading = Math.min(16000, Math.max(4000, 1500 + 65 * c.text.length));
+  const hold = captionQueue.length ? Math.max(4000, 0.8 * reading) : reading;
   captionEl.textContent = c.text;
   captionEl.classList.add('show');
   captionNow = { caption: c, since: performance.now() };

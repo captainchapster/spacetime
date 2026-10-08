@@ -168,9 +168,16 @@ The instruments are modelled as hardware you could build today, flown into a bla
   across the hull above 1 g, flashing red above 100 g).
 - *Speed tape:* on a rapidity scale, so 0.9c, 0.99c and 0.999c are all readable, with
   vertical speed.
-- *Altimeter:* height above the horizon, marked with the photon orbit, ISCO, ergosphere and
-  disk edge. It's computed from the navigation state, so it doesn't stop at the horizon: it
-  pegs and reads negative.
+- *Altimeter:* height above the horizon, marked with the ergosphere, ISCO and disk edge,
+  and both edges of the photon region ("photon region" and "inner photon").
+  - A spinning hole has no single photon sphere. Light orbiting against the spin must stay
+    out at the region's outer edge (3.96M for spin 0.95), where the "photon region" caption
+    plays. Light orbiting with the spin can circle as close as the inner photon orbit
+    (1.39M).
+  - It's computed from the navigation state, so it doesn't stop at the horizon: it pegs and
+    reads negative.
+- *Captions* stay up in proportion to their length: about 1.5 s plus 65 ms per character,
+  between 4 and 16 s.
 
 *Nav faults.* A real navigation computer doesn't quietly switch reference when its own
 stops existing: it fails. So does this one. When the chosen observer can't exist (stationary
