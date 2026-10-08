@@ -178,7 +178,7 @@ export class Ship {
    * function is re-evaluated every substep, so feedback (like the hover autopilot) stays
    * stable however much time each frame covers.
    */
-  step(st: Spacetime, dTau: number, thrust: Thrust, maxSubsteps = 400) {
+  step(st: Spacetime, dTau: number, thrust: Thrust, maxSubsteps = 400, limit?: (ship: Ship) => Ship['fate']) {
     if (this.crushed) return;
     // Substeps of a fixed fraction of the local timescale. If covering dTau would take more
     // than maxSubsteps, this call covers less: deep in the hole the game's time runs slower,
@@ -205,6 +205,13 @@ export class Ship {
       if (st.isSingular(this.x)) {
         const ending = (st as { ending?: (x: Vec4) => Ship['fate'] }).ending?.(this.x);
         this.end(ending ?? 'singularity');
+        return;
+      }
+      // Any other end the caller watches for (the hull failing, say), checked every substep
+      // so that a long time-warped frame can't skip past it.
+      const fate = limit?.(this);
+      if (fate) {
+        this.end(fate);
         return;
       }
     }

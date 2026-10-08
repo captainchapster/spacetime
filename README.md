@@ -92,6 +92,25 @@ can even raise the orbit's energy. `test/decay.test.ts` checks the model against
 integrations at four spins, equatorial and polar. Near a giant hole the brake is a fictional engine: tens of g
 for about a day and a half.
 
+**Transmission from home** (M, or the Transmission menu). A semi-transparent monitor under
+the readouts shows a live video feed from home, played as it would actually arrive.
+- *How fast it plays:* home's signal reaches you shifted in frequency by g (received over
+  emitted, traced with real light rays), so its frames arrive g times as fast as your own
+  clock ticks. Hovering low, the feed races and its sound rises in pitch; falling in, it
+  slows into slow motion and drops in pitch; with no signal, there is static.
+  - Time warp multiplies the playback too. The monitor shows both numbers: "×1.04 vs your
+    clock" and "playing at ×1040 real time".
+  - Browsers can play video only between 1/16 and 16 times normal speed. Beyond that, the
+    feed shows the right frame for each moment, without sound.
+- *What it shows:*
+  - The built-in mission-control channel: home's clock (the date and time at home, as
+    received) and messages sent at fixed moments of home's time, an hour, a day, a year
+    after you left. Hover near the hole and the years race past; fall in and they crawl.
+  - Or "Load a video…" and play your own, such as a message recorded on a phone. It stays on
+    your computer and is never uploaded.
+- Light delay from home is a constant offset and is left out: the feed starts when the
+  journey does.
+
 **Photo mode** (K, or Camera → Photo mode). Time stops and the instruments disappear. A
 guide shows exactly what will be captured, with rule-of-thirds lines. Choose:
 - the frame: screen, 16:9, 1.85:1, 2.39:1 anamorphic, 2.76:1, 3:2, square, 4:5 or 9:16.

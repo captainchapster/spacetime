@@ -189,6 +189,46 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      /* The transmission from home: a semi-transparent monitor. */
+      /* A twin of the readouts panel (.panel), placed and sized to match it by layoutFeed(). */
+      #feed {
+        left: 12px;
+        top: 360px;
+        box-sizing: border-box;
+        display: none;
+        z-index: 6;
+      }
+      #feed.show {
+        display: block;
+      }
+      #feed .screen {
+        position: relative;
+      }
+      #feed canvas {
+        display: block;
+        width: 100%;
+        border-radius: 4px;
+        opacity: 0.92;
+      }
+      #feed .screen::after {
+        /* scanlines */
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: 4px;
+        background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.18) 0 1px, transparent 1px 3px);
+        pointer-events: none;
+      }
+      #feed .status {
+        margin-top: 6px;
+        font-size: 11px;
+        color: #8494b0;
+        text-align: center;
+      }
+      body.cinematic #feed,
+      body.photo #feed {
+        display: none;
+      }
       #credits {
         position: fixed;
         bottom: 4px;
@@ -405,6 +445,7 @@
         <b>P</b><span>pause</span>
         <b>C</b><span>cinematic mode</span>
         <b>K</b><span>photo mode (Space: still, G: GIF clip)</span>
+        <b>M</b><span>transmission from home</span>
         <b>?</b><span>show / hide this</span>
       </div>
     </div>

@@ -21,6 +21,7 @@ import { installTooltips, tip } from './tooltip';
 import { loadRealSky, skyMatrix } from './realSky';
 import { NavHud } from './navHud';
 import { PhotoMode } from './photo';
+import { Transmission } from './transmission';
 import { type FrameParams, Renderer, TABLE_N } from './renderer';
 
 // ---------------------------------------------------------------- black holes
@@ -39,6 +40,9 @@ const HOLES: Record<string, HolePreset> = {
   m87: { label: 'M87* · 6.5×10⁹ M☉', mass: 6.5e9, spin: 0.9, logEddington: -5 },
   stellar: { label: 'Stellar · 10 M☉', mass: 10, spin: 0.7, logEddington: -1 },
 };
+
+/** The video feed from home (see transmission.ts). */
+const transmission = new Transmission();
 
 /** The ship's length (metres), and the tidal stretch across it (g) at which the hull fails. */
 const SHIP_LENGTH_M = 100;
@@ -150,6 +154,8 @@ const settings = {
   volume: 0.6,
   captions: true,
   cinematic: false,
+  /** Show the transmission from home. */
+  feed: true,
   drift: false,
   grain: 0,
   vignette: 1,
@@ -327,6 +333,7 @@ function resetShip() {
   story.reset();
   sightings.clear();
   hideEpilogue();
+  transmission.restart();
   if (movedFrom !== null) {
     showCaption({
       text: `Near a hole this small, tides at ${movedFrom.toFixed(0)}M would tear the ship apart at once, so you start further out, at ${r0.toFixed(0)}M, where they stretch the hull by ${SAFE_START_G} g. They grow eightfold each time you halve your distance; the hull fails at ${HULL_LIMIT_G} g.`,
@@ -527,6 +534,30 @@ tip(fMood.add(settings, 'grain', 0, 1, 0.01).name('Film grain'), 'Artistic: phot
 tip(fMood.add(settings, 'vignette', 0, 1, 0.01).name('Vignette'), 'Artistic: darken the corners, like a lens.');
 fMood.close();
 
+const fFeed = gui.addFolder('Transmission from home');
+const videoPicker = document.createElement('input');
+videoPicker.type = 'file';
+videoPicker.accept = 'video/*';
+videoPicker.addEventListener('change', () => {
+  const file = videoPicker.files?.[0] ?? null;
+  if (file) transmission.loadVideo(file);
+  videoPicker.value = '';
+});
+tip(
+  fFeed.add(settings, 'feed').name('Show the feed (M)').onChange((on: boolean) => transmission.setVisible(on)),
+  'A live video feed from home, played as it actually arrives: at g times your own clock, where g is the shift of home\'s signal. Hovering low it races, falling in it slows, and with no signal there is static. Time warp speeds it up too.',
+);
+tip(
+  fFeed.add({ load: () => videoPicker.click() }, 'load').name('Load a video…'),
+  'Play a video of your own through the feed: record a message from home on your phone, say. It stays on your computer; nothing is uploaded. Its sound shifts in pitch with the signal.',
+);
+tip(
+  fFeed.add({ channel: () => transmission.loadVideo(null) }, 'channel').name('Mission-control channel'),
+  'Back to the built-in feed: home\'s clock, and messages sent at fixed moments of home\'s time.',
+);
+tip(fFeed.add(transmission, 'volume', 0, 1, 0.01).name('Feed volume'), 'Volume of a loaded video.');
+transmission.setVisible(settings.feed);
+
 const photo = new PhotoMode({
   renderer,
   canvas,
@@ -557,6 +588,11 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyT') cycleTarget();
   if (e.code === 'KeyV') settings.rearView = !settings.rearView;
   if (e.code === 'Slash') document.getElementById('help')!.classList.toggle('collapsed');
+  if (e.code === 'KeyM') {
+    settings.feed = !settings.feed;
+    transmission.setVisible(settings.feed);
+    refresh();
+  }
   if (e.code === 'KeyK' || (e.code === 'Escape' && photo.active)) {
     photo.toggle();
     e.preventDefault();
@@ -599,6 +635,7 @@ canvas.addEventListener('pointermove', (e) => {
 window.addEventListener('resize', () => {
   renderer.resize();
   redraw();
+  layoutFeed();
 });
 
 // ---------------------------------------------------------------- simulation loop
@@ -625,7 +662,14 @@ function frame(now: number) {
   }
   frameMs = 0.9 * frameMs + 0.1 * (dtReal * 1000);
 
+  const tauBefore = ship.tau;
   simulate(dtReal, !settings.paused, true);
+  transmission.update({
+    dTauSeconds: (ship.tau - tauBefore) * gravitationalTime(settings.mass),
+    dtReal,
+    g: home ? home.g : null,
+    ended: ship.crushed,
+  });
 
   // Trace a new picture only when there's something new to see. Once the journey has ended
   // the last frame stays (the epilogue covers it); while paused, only looking around or
@@ -795,7 +839,7 @@ function simulate(dtReal: number, run: boolean, piloted: boolean) {
 
   if (run && !ship.crushed) {
     const dTau = (dtReal * 10 ** settings.logWarp) / gravitationalTime(settings.mass);
-    ship.step(hole, dTau, control, 3000);
+    ship.step(hole, dTau, control, 3000, hullFails);
   } else {
     control(ship);
   }
@@ -840,9 +884,13 @@ function simulate(dtReal: number, run: boolean, piloted: boolean) {
     });
   }
   wasBraking = braking;
-  // A real hull has a breaking point: the tidal stretch from nose to tail.
-  const tidal = tidalAcceleration(Math.max(hole.radius(ship.x), 1e-3), SHIP_LENGTH_M, gravitationalRadius(settings.mass));
-  if (!ship.crushed && tidal > HULL_LIMIT_G) ship.end('tidal');
+  if (!ship.crushed && hullFails(ship)) ship.end('tidal');
+}
+
+/** A real hull has a breaking point: the tidal stretch from nose to tail. */
+function hullFails(s: Ship): 'tidal' | null {
+  const tidal = tidalAcceleration(Math.max(hole.radius(s.x), 1e-3), SHIP_LENGTH_M, gravitationalRadius(settings.mass));
+  return tidal > HULL_LIMIT_G ? 'tidal' : null;
 }
 
 
@@ -1022,6 +1070,16 @@ function cameraFrame(): FrameParams['frame'] {
   ];
 }
 
+/** Put the transmission monitor just under the readouts, exactly as wide, and aligned. */
+function layoutFeed() {
+  const hudBox = hud.getBoundingClientRect();
+  Object.assign(transmission.panel.style, {
+    left: `${Math.round(hudBox.left)}px`,
+    top: `${Math.round(hudBox.bottom + 10)}px`,
+    width: `${Math.round(hudBox.width)}px`,
+  });
+}
+
 /** Explanations shown when hovering the HUD's labels. */
 const HUD_TIPS: Record<string, string> = {
   Distance: 'Your distance from the centre, in M (the hole\'s gravitational radius, GM/c²) and in real units.',
@@ -1110,6 +1168,7 @@ function updateHud() {
     );
   else if (!rel) lines.push('<div class="warn">Inside the ergosphere: space itself drags you around.</div>');
   hud.innerHTML = lines.join('');
+  layoutFeed();
 }
 
 requestAnimationFrame(frame);
@@ -1349,6 +1408,7 @@ Object.assign(window, {
     ambience: () => ambience,
     story: () => story,
     photo,
+    transmission,
     /** Diagnostic: the auto-exposure state. */
     get exposure() {
       return { autoGain, settling: exposureSettling, settleUntil, now: performance.now() };
