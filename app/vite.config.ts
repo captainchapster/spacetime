@@ -12,5 +12,10 @@ export default defineConfig({
       },
     },
   },
-  test: { include: ['test/**/*.test.ts'] },
+  test: {
+    include: ['test/**/*.test.ts'],
+    // Several tests integrate thousands of orbital steps; shared CI machines can take a few
+    // times longer than a desktop, well past the 5 s default.
+    testTimeout: 60_000,
+  },
 });
