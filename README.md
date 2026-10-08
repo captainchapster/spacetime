@@ -11,6 +11,11 @@ lifted into view above and below it.*
 On a touch-only phone or tablet, a notice explains this first. The simulation loads only if
 the visitor chooses to continue, and the choice is remembered.
 The 4D sandbox is at [captainchapster.github.io/spacetime](https://captainchapster.github.io/spacetime/).
+
+**How it works, for curious readers:** [*Painting with Light Through a Spinning Black
+Hole*](docs/paper/rendering.pdf) is a 16-page paper, written for anyone with
+university-level maths, that follows one ray of light from a pixel out past the black hole
+and explains every step of the rendering ([LaTeX source](docs/paper/rendering.tex)).
 Every push to `main` rebuilds and republishes the site (`.github/workflows/pages.yml`).
 
 An interactive sandbox for exploring 4D spacetime, and how its geometry *is* gravity.
