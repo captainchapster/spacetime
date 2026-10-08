@@ -36,6 +36,8 @@ export interface Caption {
   text: string;
   /** Landmark captions describe where you are right now, so they interrupt others. */
   landmark: boolean;
+  /** A caution: it is never dropped from the queue, only delayed, until it has been shown. */
+  keep?: boolean;
 }
 
 const BEATS: Beat[] = [

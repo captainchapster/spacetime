@@ -152,9 +152,10 @@ in the ergosphere, hold-still inside the horizon), the computer stops aligning t
 and an orange striped OFF flag drops across the ball, like the warning flag on an Apollo
 attitude indicator. The ball keeps working on gyros alone: turn the ship and it turns, and
 any real gyroscopic precession shows. The navigation markers vanish, the NAV lamp lights and
-the speed tape reads NO REF. Any SAS lock that steers by the
-navigation solution (prograde, normal, radial and so on) drops back to Hold and won't
-re-engage. Target lock still works, because it only needs the beacon's position. Pick
+the speed tape reads NO REF. The autopilot lets go: Hold and every lock that steers by the
+navigation solution (prograde, normal, radial and so on) drop to Free, and the ship flies
+on its gyroscopes. None of them re-engage until the reference is back. Target lock still
+works, because it only needs the beacon's position. Pick
 "Falling space (river)" and the instruments work all the way down.
 
 *Home signal* (HUD). This is what the ship can actually measure: the frequency shift of a
@@ -175,6 +176,12 @@ actually see.
   within 1% of the horizon was stopped, which blacked out the screen for the last few
   frames before crossing.)
 - Any ray that stops being null (H ≠ 0) is discarded rather than drawn.
+- The ship's frame can never become its own mirror image. When it turns, its "right" axis
+  is rebuilt from a hint, and at high speed in strongly curved coordinates that hint once
+  picked the mirror image. Just outside the ergosphere, the hole and the disk would suddenly
+  swap sides of the screen. The frame's handedness (the sign of det[u; e₁; e₂; e₃]) is
+  now fixed at the start and restored after every turn. `test/handedness.test.ts` replays
+  that spiral.
 
 `test/ergosphere.test.ts` reproduces the original bug and checks that every pixel's fate is
 the same at the game's step size and a much finer one.
@@ -196,12 +203,49 @@ up at any time warp: however fast the target swings round on screen, in the ship
 it turns slowly (radial in turns once an orbit), which real wheels track easily. Turning by
 hand drops you back to Hold.
 
+*Hold* is an attitude-hold autopilot. It holds the heading, pitch and roll shown on the
+navball, so it needs the navigation solution like the locks do. (It once held raw coordinate
+directions instead. Deep in the hole, at near light speed, those get badly distorted, and
+the ship was thrown about.) *Free* fires nothing: the ship's axes are carried by its
+gyroscopes, which is always well defined, even inside the horizon.
+
 The locks aim where the navball shows each direction, so a lock puts its marker dead
 centre on the ball. At speed that differs from where the same direction appears in the 3D
 view, which shows aberration. Two caveats:
 - The target direction is the straight line to the target's current position, which
   ignores light delay and lensing.
 - Auto-exposure reads the GPU asynchronously, so it never stalls a frame.
+- Rays are stopped as soon as their fate is certain, exactly rather than by rule of thumb.
+  Each ray has three conserved quantities: its energy, its angular momentum about the spin
+  axis and Carter's constant. From these, the radial equation says whether a ray heading in
+  will ever turn back before the horizon. If it won't, it's captured at once, as long as
+  nothing else lies on its way in: the ray must already be inside the disk's inner edge and
+  beyond every beacon's reach. (Without that condition, rays that pass through the disk
+  on their way in were stopped too soon, leaving black blocks over the disk in front of the
+  shadow.)
+  - From inside the horizon, the sign of the ray's energy relative to the horizon's
+    rotation, E(r₊² + a²) − aL, says which half of the horizon it leaves through. The half
+    belonging to the idealised solution's other universe is black from the first step.
+  - A ray stalled at the horizon (radius frozen, coordinate time racing away) is stopped
+    too.
+  - Before, rays crawled toward horizons they never cross until they ran out of steps.
+    Close in, a third of all pixels did this; inside the horizon facing the hole, every
+    pixel did. Now the average steps per pixel are 4.4× fewer close in (327 → 74) and 2.2×
+    fewer inside (900 → 407), for the same picture.
+  - `test/capture.test.ts` checks that every ray stopped early meets the same fate (hole,
+    disk or sky) as a fine integration without the shortcut, from five vantage points,
+    inside the horizon included, with the disk in place.
+  - For profiling, `flight.countSteps()` in the browser console reads back each pixel's
+    step count.
+- Adaptive resolution (Camera menu, on by default) traces at a lower resolution when frames
+  take longer than 1/40 s, never above Render scale. The physics is the same, only coarser.
+- The navball is repainted only when it actually turns, and without per-pixel trigonometry.
+  It had been the largest CPU cost, more than all the physics.
+- A new picture is traced only when there's something new to see. While paused, the view is
+  re-traced only when you look around, change a setting or resize the window. Once the
+  journey has ended, the last frame stays behind the epilogue. Before this, the GPU kept
+  re-tracing the costliest light paths in the whole simulation (from just above the inner
+  horizon), unseen.
 
 **Falling in.** Crossing the horizon is locally unremarkable (the equivalence principle):
 nothing flashes or jumps. What changes is where the outside universe is.
@@ -239,7 +283,10 @@ arbitrary radius:
   rather than a place, and every path reaches it.
 - *Torn apart by tides.* The hull of the 100 m ship fails when the tidal stretch from nose
   to tail passes 1000 g.
-  - Near a 10-solar-mass hole that happens well outside the horizon.
+  - Near a 10-solar-mass hole that happens well outside the horizon, at about 200M. No start
+    puts you somewhere that lethal, or every restart would be instant death. Where a start
+    would put the ship in tides over 10 g, it moves straight out to where they're exactly
+    10 g (944M for the stellar hole), with a caption saying why.
   - Near Gargantua it happens only within about 0.004 M of a non-spinning centre.
 
 `test/ending.test.ts` checks each ending: falls at several angles and spins stop within one
@@ -277,15 +324,15 @@ the physics and the captions.
   relative to someone hovering where you are: (dτ/dt)² + v² = 1, always.
 - *Lensing grid.* Camera → Sky → "Lensing grid" replaces the stars with lines of latitude and
   longitude, so you can see how the sky folds around the photon ring.
-- *Frame dragging.* Hover by a spinning hole, switch Ship → "Attitude hold" off, and turn up
-  the time warp. Your ship is now a free gyroscope, and it slowly turns as the hole's
+- *Frame dragging.* Hover by a spinning hole, switch the attitude to Free gyroscope (key 0),
+  and turn up the time warp. Your ship is now a free gyroscope, and it slowly turns as the hole's
   rotation drags space around:
   - prograde at 2J/r³ over the poles;
   - retrograde at J/r³ at the equator.
 
   This is the Lense–Thirring effect that Gravity Probe B measured around Earth.
-  `test/autopilot.test.ts` checks both rates. With attitude hold on (the default), reaction
-  wheels keep you pointed.
+  `test/autopilot.test.ts` checks both rates. In Hold (the default), the reaction wheels
+  keep you pointed relative to the local frame instead.
 
 The hover autopilot recomputes its thrust on every physics substep and holds an anchor point.
 That keeps it stable at any time warp; it once diverged when frames spanned hundreds of M.
@@ -325,7 +372,16 @@ hole toward the Galactic Centre.
 
 **Artistic choices, labelled as such in the UI:**
 - the procedural starfield and galaxy (and their brightness relative to the disk);
-- the disk's turbulence texture;
+- the disk's turbulence texture. The motion is not artistic: each part of the pattern
+  orbits at the exact Kerr orbital speed for its radius, and you see it as it was when its
+  light left. Eddies don't last: each lives about two orbits of the disk's inner edge, then
+  fades as a new one takes its place, as turbulence keeps renewing a real disk.
+  - Without that, the differential rotation would wind any pattern into ever finer
+    spirals. After a long time warp the disk then looked frozen and grainy, though its gas
+    was moving as fast as ever.
+  - The eddies' life cycle runs on one clock for the whole disk. A fixed, smooth offset with
+    radius keeps it from all renewing at once. A clock ticking at each radius's own orbital
+    rate would wind up in the same way.
 - bloom, ACES tone-mapping and auto-exposure (camera effects);
 - the optional "Interstellar look", which switches off the disk's frequency shifts. The
   film did the same; real disks are lopsided, as in the EHT images.

@@ -64,6 +64,33 @@ export class Ship {
       [0, ...forward],
     ];
     this.orthonormalise(st);
+    this.handedness = this.frameOrientation();
+  }
+
+  /**
+   * The frame's handedness: the sign of det[u; e1; e2; e3] in components. No real motion or
+   * turn can change it (the frame never passes through a degenerate one), so it's fixed at
+   * the start and restored if a rebuilt frame ever comes out mirrored.
+   */
+  private handedness = 1;
+
+  private frameOrientation() {
+    const m = [this.u, ...this.e].map((v) => [...v]);
+    let det = 1;
+    for (let c = 0; c < 4; c++) {
+      let p = c;
+      for (let r = c + 1; r < 4; r++) if (Math.abs(m[r][c]) > Math.abs(m[p][c])) p = r;
+      if (p !== c) {
+        [m[p], m[c]] = [m[c], m[p]];
+        det = -det;
+      }
+      det *= m[c][c];
+      for (let r = c + 1; r < 4; r++) {
+        const k = m[r][c] / m[c][c];
+        for (let j = c; j < 4; j++) m[r][j] -= k * m[c][j];
+      }
+    }
+    return Math.sign(det);
   }
 
   /**
@@ -72,14 +99,17 @@ export class Ship {
    * Re-applying the ship's own `attitude()` leaves it exactly as it was.
    */
   orient(st: Spacetime, forward: Vec4, up: Vec4) {
-    // Right ≈ forward × up (spatial parts): it only has to pick the right-handed one of the
-    // two unit vectors orthogonal to u, up and forward, so the result is exact regardless.
+    // Right ≈ forward × up (spatial parts) is only a hint: Gram–Schmidt turns it into one of the
+    // two unit vectors orthogonal to u, up and forward. Moving fast in strongly curved
+    // coordinates the hint can point nearer the wrong one, which would mirror the view, so
+    // the frame's handedness is checked and restored.
     const held = this.platformAxes();
     const f = forward;
     const t = up;
     const right: Vec4 = [0, f[2] * t[3] - f[3] * t[2], f[3] * t[1] - f[1] * t[3], f[1] * t[2] - f[2] * t[1]];
     this.e = [right, [...up], [...forward]];
     this.orthonormalise(st);
+    if (this.frameOrientation() !== this.handedness) this.e[0] = this.e[0].map((c) => -c) as Vec4;
     this.alignPlatform(st, held); // turning the ship doesn't turn the gyroscopes
   }
 

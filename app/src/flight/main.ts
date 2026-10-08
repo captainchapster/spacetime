@@ -1,7 +1,7 @@
 import GUI from 'lil-gui';
 import { blackbodyRgb } from '../physics/blackbody';
 import { type DiskModel, decayBrake, diskModel, iscoRadius, polarIsso } from '../physics/disk';
-import { inner } from '../physics/linalg';
+import { type Vec4, inner } from '../physics/linalg';
 import { Kerr } from '../physics/metrics/kerr';
 import { type LockMode, type Reference, type V3, alignPlatform, bodyDirection, lockDirection, navState, worldToShip } from '../physics/nav';
 import { Ship, type Vec3 } from '../physics/ship';
@@ -39,6 +39,12 @@ const HOLES: Record<string, HolePreset> = {
   m87: { label: 'M87* · 6.5×10⁹ M☉', mass: 6.5e9, spin: 0.9, logEddington: -5 },
   stellar: { label: 'Stellar · 10 M☉', mass: 10, spin: 0.7, logEddington: -1 },
 };
+
+/** The ship's length (metres), and the tidal stretch across it (g) at which the hull fails. */
+const SHIP_LENGTH_M = 100;
+const HULL_LIMIT_G = 1000;
+/** No start puts the ship where the tidal stretch is more than this (g). */
+const SAFE_START_G = 10;
 
 // ---------------------------------------------------------------- starting positions
 
@@ -166,6 +172,8 @@ const settings = {
   starGain: 1,
   galaxyGain: 1,
   renderScale: 0.6,
+  /** Lower the resolution (never above renderScale) when frames take too long. */
+  adaptiveRes: true,
   quality: 'high' as 'draft' | 'high' | 'ultra',
   beaconSpeed: 0,
   beaconRadius: 0.12,
@@ -203,7 +211,7 @@ const captionEl = document.getElementById('caption')!;
 const captionQueue: Caption[] = [];
 let captionTimers: number[] = [];
 /** The caption on screen, and when it appeared. */
-let captionNow: { landmark: boolean; since: number } | null = null;
+let captionNow: { caption: Caption; since: number } | null = null;
 /** Where the hover autopilot holds the ship (re-set whenever the pilot stops thrusting). */
 let hoverAnchor: Vec3 | null = null;
 /** Retro-brake strength (proper acceleration, units 1/M), and whether it fired last step. */
@@ -230,7 +238,32 @@ function updateBrake() {
   brakeA = brakePolar ? decayBrake(0, 6 + (r - floor), settings.brakeTurns) : decayBrake(hole.a, r, settings.brakeTurns);
 }
 /** The coordinate directions the reaction wheels keep the ship pointing (attitude hold). */
-let heldAttitude: ReturnType<Ship['attitude']>;
+/**
+ * Attitude hold: the navball reading to hold, as the ball matrix (local East, North, Up along
+ * the ship's axes). Like a real attitude-hold autopilot it holds heading, pitch and roll
+ * relative to the local frame, so it needs the navigation solution. Null: take the current
+ * reading on the next frame.
+ */
+let heldBall: number[][] | null = null;
+/** Set when the autopilot lets go because the navigation solution failed (for the caption). */
+let autopilotLetGo = false;
+
+/** Hold whatever the navball reads now (if it reads anything). */
+function captureHold() {
+  const n = navState(hole, ship, settings.reference);
+  heldBall = n.valid ? n.ball.map((row) => [...row]) : null;
+}
+
+/** Turn the ship back to the held navball reading, given the current (valid) one. */
+function applyHold(ball: number[][]) {
+  if (!heldBall) return;
+  const held = heldBall;
+  // The local East, North, Up as 4-vectors, from the current reading.
+  const axes = ball.map((row) => [0, 1, 2, 3].map((m) => row[0] * ship.e[0][m] + row[1] * ship.e[1][m] + row[2] * ship.e[2][m]));
+  // The ship's axes that would give the held reading.
+  const axis = (i: number) => [0, 1, 2, 3].map((m) => held[0][i] * axes[0][m] + held[1][i] * axes[1][m] + held[2][i] * axes[2][m]) as Vec4;
+  ship.orient(hole, axis(2), axis(1));
+}
 /** Luminance of a blackbody at the disk's peak temperature: the exposure reference. */
 let referenceLuminance = 1;
 
@@ -263,7 +296,13 @@ function resetShip() {
   // Kerr–Schild position for spheroidal radius r at angles (θ, φ).
   const a = hole.a;
   brakePolar = s.orbit === 'polarDecay';
-  const r0 = s.fromIsco !== undefined ? brakeFloor() + s.fromIsco : s.r;
+  let r0 = s.fromIsco !== undefined ? brakeFloor() + s.fromIsco : s.r;
+  // Near a small hole the tides at the usual starting points would tear the ship apart at
+  // once (and again on every restart). Tidal stretch falls off as 1/r³, so move straight
+  // out to where it's survivable.
+  const tides = tidalAcceleration(r0, SHIP_LENGTH_M, gravitationalRadius(settings.mass));
+  const movedFrom = tides > SAFE_START_G ? r0 : null;
+  if (movedFrom !== null) r0 *= Math.cbrt(tides / SAFE_START_G);
   const rho = Math.sqrt(r0 * r0 + a * a);
   const pos: Vec3 = [rho * Math.sin(th) * Math.cos(ph), rho * Math.sin(th) * Math.sin(ph), r0 * Math.cos(th)];
   const n = Math.hypot(...pos);
@@ -282,12 +321,19 @@ function resetShip() {
   updateBrake();
   settings.attitude = s.attitude ?? 'hold';
   hoverAnchor = null;
-  heldAttitude = ship.attitude();
+  heldBall = null;
   beacons = new Beacons(hole);
   beacons.advanceTo(ship.x[0]);
   story.reset();
   sightings.clear();
   hideEpilogue();
+  if (movedFrom !== null) {
+    showCaption({
+      text: `Near a hole this small, tides at ${movedFrom.toFixed(0)}M would tear the ship apart at once, so you start further out, at ${r0.toFixed(0)}M, where they stretch the hull by ${SAFE_START_G} g. They grow eightfold each time you halve your distance; the hull fails at ${HULL_LIMIT_G} g.`,
+      landmark: false,
+      keep: true,
+    });
+  }
   if (s.beacon) {
     beacons.launch(ship, 0, 1.2);
     settings.logWarp = Math.round(Math.log10(gravitationalTime(settings.mass) * 20)); // ~20M per second: a blink a second
@@ -450,11 +496,14 @@ tip(
   fCam
     .add(settings, 'renderScale', 0.25, 1, 0.05)
     .name('Render scale')
-    .onChange((v: number) => {
-      renderer.renderScale = v;
-      renderer.resize();
-    }),
-  'Fraction of screen resolution to ray-trace at. Lower it if the frame rate drops.',
+    .onChange((v: number) => setTraceScale(v)),
+  'Fraction of screen resolution to ray-trace at (the most it will use, with Adaptive resolution on).',
+);
+tip(
+  fCam.add(settings, 'adaptiveRes').name('Adaptive resolution').onChange((on: boolean) => {
+    if (!on) setTraceScale(settings.renderScale);
+  }),
+  'When frames take too long (deep in the hole, say), trace at a lower resolution until the frame rate recovers. It never goes above Render scale, so it only ever saves work. The physics is the same either way.',
 );
 tip(
   fCam.add({ photo: () => photo.toggle(true) }, 'photo').name('📷 Photo mode (K)'),
@@ -547,7 +596,10 @@ canvas.addEventListener('pointermove', (e) => {
   pilotTurned();
 });
 
-window.addEventListener('resize', () => renderer.resize());
+window.addEventListener('resize', () => {
+  renderer.resize();
+  redraw();
+});
 
 // ---------------------------------------------------------------- simulation loop
 
@@ -575,8 +627,21 @@ function frame(now: number) {
 
   simulate(dtReal, !settings.paused, true);
 
+  // Trace a new picture only when there's something new to see. Once the journey has ended
+  // the last frame stays (the epilogue covers it); while paused, only looking around or
+  // changing a setting needs one. (Otherwise the GPU would keep tracing the same light paths,
+  // and after the end the most expensive ones there are, from deep inside the hole.)
+  const params = frameParams();
+  const key = ended ? `ended ${renderer.generation}` : settings.paused ? viewKey() : null;
+  // After a change, keep drawing a moment longer, and while auto-exposure is still
+  // adjusting: its light meter only reads frames that are drawn.
+  if (key !== lastViewKey) settleUntil = now + 1500;
+  const fresh = key === null || key !== lastViewKey || (!ended && (now < settleUntil || exposureSettling));
+  lastViewKey = key;
   const t0 = performance.now();
-  renderer.render(frameParams());
+  if (fresh) renderer.render(params);
+  if (fresh && key === null) adaptResolution();
+  else adaptSince = 0; // paused or ended: start timing afresh when running again
   const t1 = performance.now();
   drawInstruments();
   timings.render = t1 - t0;
@@ -584,14 +649,16 @@ function frame(now: number) {
 
   // Like a camera: aim to put the brightest few percent of the frame near white.
   meterTimer -= dtReal;
-  if (meterTimer <= 0) {
+  if (fresh && meterTimer <= 0) {
     meterTimer = 0.25;
     const tm = performance.now();
     const bright = renderer.meterLuminance();
     timings.meter = performance.now() - tm;
     if (bright > 0 && Number.isFinite(bright)) sceneBrightness = Math.min(1, Math.max(0, 0.55 + 0.25 * Math.log10(bright)));
+    exposureSettling = false;
     if (settings.autoExposure && bright > 0 && Number.isFinite(bright)) {
       const target = Math.min(Math.max(0.9 / bright, 0.05), 50);
+      exposureSettling = Math.abs(target / autoGain - 1) > 0.03;
       autoGain *= (target / autoGain) ** 0.35;
     }
   }
@@ -603,6 +670,54 @@ function frame(now: number) {
   }
   updateAmbience(dtReal);
   requestAnimationFrame(frame);
+}
+
+/** Trace at this fraction of screen resolution. */
+function setTraceScale(v: number) {
+  if (Math.abs(renderer.renderScale - v) < 1e-3) return;
+  renderer.renderScale = v;
+  renderer.resize();
+}
+
+/**
+ * Adaptive resolution: once a second, if frames have averaged slower than 40 per second,
+ * trace at 85% of the resolution; if faster than 55, step back up toward Render scale.
+ */
+let adaptSince = 0;
+let adaptFrames = 0;
+function adaptResolution() {
+  if (!settings.adaptiveRes) return;
+  const now = performance.now();
+  if (!adaptSince) adaptSince = now;
+  adaptFrames++;
+  if (now - adaptSince < 1000) return;
+  const mean = (now - adaptSince) / 1000 / adaptFrames; // real seconds per frame
+  adaptSince = now;
+  adaptFrames = 0;
+  if (mean > 1 / 40) setTraceScale(Math.max(0.3, Math.min(settings.renderScale, renderer.renderScale * 0.85)));
+  else if (mean < 1 / 55 && renderer.renderScale < settings.renderScale) setTraceScale(Math.min(settings.renderScale, renderer.renderScale * 1.1));
+}
+
+/** The last frame's view, while nothing should change it (see frame()); null when running. */
+let lastViewKey: string | null = null;
+/** Keep drawing until this time (ms), and while auto-exposure is still adjusting. */
+let settleUntil = 0;
+let exposureSettling = false;
+
+/**
+ * Everything a paused view depends on: where the ship is and how it's turned, every
+ * setting, the exposure and the window. If none of it changes, neither does the picture.
+ */
+function viewKey() {
+  // Rounded, so the last-digit jitter of re-applying the same attitude every frame (Hold) or
+  // an exposure that has all but settled doesn't count as a change.
+  const round = (_: string, v: unknown) => (typeof v === 'number' ? Number(v.toPrecision(7)) : v);
+  return JSON.stringify([ship.x, ship.u, ship.e, settings, autoGain.toPrecision(2), photo.roll(), photo.pan(), renderer.generation, beacons.list.length], round);
+}
+
+/** Make the next frame trace a new picture (after something outside viewKey changes). */
+function redraw() {
+  lastViewKey = null;
 }
 
 /**
@@ -670,16 +785,21 @@ function simulate(dtReal: number, run: boolean, piloted: boolean) {
   } else {
     control(ship);
   }
-  // Reaction wheels. Hold: keep pointing where the pilot last pointed. Locks: slew toward a
-  // direction. Free: a plain gyroscope, which near a spinning hole slowly precesses.
-  if (settings.attitude === 'hold') {
-    ship.orient(hole, heldAttitude.forward, heldAttitude.up);
-  } else if (settings.attitude !== 'free' && !navState(hole, ship, settings.reference).valid && settings.attitude !== 'target') {
-    // Locks steer by the navigation solution; with no valid reference they can't, and a real
-    // autopilot would drop back to holding attitude.
-    setAttitude('hold');
-    showCaption({ text: 'Navigation reference lost: the autopilot has dropped back to holding attitude.', landmark: false });
-  } else if (settings.attitude !== 'free') {
+  // Reaction wheels. Hold: keep the navball reading where the pilot left it. Locks: slew
+  // toward a direction. Free: nothing at all; the ship's axes are carried by its gyroscopes
+  // (near a spinning hole they slowly precess against the distant stars).
+  const nav = settings.attitude === 'free' ? null : navState(hole, ship, settings.reference);
+  if (!nav) {
+    // Free gyro.
+  } else if (!nav.valid && settings.attitude !== 'target') {
+    // Hold and the locks steer by the navigation solution. Without one, a real autopilot
+    // lets go rather than steer by garbage, and the ship flies on its gyroscopes.
+    setAttitude('free');
+    autopilotLetGo = true;
+  } else if (settings.attitude === 'hold') {
+    if (!heldBall) captureHold();
+    applyHold(nav.ball);
+  } else {
     const aim = lockDirection(hole, ship, settings.attitude, targetPosition(), settings.reference);
     // Slew at the reaction wheels' rate, plus however far the target itself moved since
     // last frame (measured in the ship's own non-rotating frame). So a lock catches up at a
@@ -692,7 +812,6 @@ function simulate(dtReal: number, run: boolean, piloted: boolean) {
       ship.turnToward(hole, aim, SLEW_RATE * dtReal + swing);
       lastAim = bodyDirection(hole, ship, aim);
     }
-    heldAttitude = ship.attitude();
   }
   // The navigation computer keeps the gyro platform aligned while it has a reference.
   alignPlatform(hole, ship, settings.reference);
@@ -712,9 +831,6 @@ function simulate(dtReal: number, run: boolean, piloted: boolean) {
   if (!ship.crushed && tidal > HULL_LIMIT_G) ship.end('tidal');
 }
 
-/** The ship's length (metres), and the tidal stretch across it (g) at which the hull fails. */
-const SHIP_LENGTH_M = 100;
-const HULL_LIMIT_G = 1000;
 
 /** Navball, speed tape and altimeter, measured against the local hovering observer. */
 function drawInstruments() {
@@ -726,12 +842,14 @@ function drawInstruments() {
     showCaption({
       text:
         settings.reference === 'static'
-          ? 'NAV caution. Inside the ergosphere nothing can stay at rest relative to the distant stars, so the navigation computer has no stationary frame to measure against. The ball is on gyros alone.'
-          : 'NAV caution. Inside the horizon nothing can hold still, so the navigation computer has no hold-still frame to measure against. The ball is on gyros alone.',
+          ? `NAV caution. Inside the ergosphere nothing can stay at rest relative to the distant stars, so the navigation computer has no stationary frame to measure against. The ball is on gyros alone.${autopilotLetGo ? ' The autopilot has let go: the ship is flying free on its gyroscopes.' : ''}`
+          : `NAV caution. Inside the horizon nothing can hold still, so the navigation computer has no hold-still frame to measure against. The ball is on gyros alone.${autopilotLetGo ? ' The autopilot has let go: the ship is flying free on its gyroscopes.' : ''}`,
       landmark: false,
+      keep: true,
     });
   }
   navWasValid = nav.valid;
+  autopilotLetGo = false;
   const r = hole.radius(ship.x);
   const lamps = { homeLost: home === null, tidalG: tidalAcceleration(Math.max(r, 1e-3), SHIP_LENGTH_M, gravitationalRadius(settings.mass)) };
   navHud.draw(nav, {
@@ -776,8 +894,9 @@ function updateSasButtons() {
  * none), and all but the target lock steer by the navigation solution, which must be valid.
  */
 function lockAvailable(mode: LockMode) {
-  if (mode === 'free' || mode === 'hold') return true;
+  if (mode === 'free') return true;
   if (mode !== 'target' && !navState(hole, ship, settings.reference).valid) return false;
+  if (mode === 'hold') return true;
   return lockDirection(hole, ship, mode, targetPosition(), settings.reference) !== null;
 }
 
@@ -791,17 +910,20 @@ function setAttitude(mode: LockMode) {
     return;
   }
   settings.attitude = mode;
-  heldAttitude = ship.attitude();
+  captureHold();
   if (mode === 'target' && settings.target < 0) cycleTarget();
   refresh();
 }
 
-/** The pilot turned by hand: a lock lets go and holds wherever they're now pointing. */
+/**
+ * The pilot turned by hand: a lock lets go and holds wherever they're now pointing (or, with
+ * no navigation solution to hold by, leaves the ship free).
+ */
 function pilotTurned() {
   lastAim = null;
-  heldAttitude = ship.attitude();
+  captureHold();
   if (settings.attitude !== 'free' && settings.attitude !== 'hold') {
-    settings.attitude = 'hold';
+    settings.attitude = heldBall ? 'hold' : 'free';
     refresh();
   }
 }
@@ -902,7 +1024,7 @@ const HUD_TIPS: Record<string, string> = {
   'Your time rate': 'How fast your clock runs compared with coordinate time far away: gravity and speed both slow it.',
   'Time warp': 'How much faster than real time your clock is running.',
   'Disk peak': 'The disk\'s hottest temperature, from the hole\'s mass, spin and accretion rate.',
-  Frame: 'Time to draw each frame.',
+  Frame: 'Time to draw each frame, and the resolution being traced if Adaptive resolution has lowered it to keep up.',
 };
 
 function updateHud() {
@@ -943,7 +1065,7 @@ function updateHud() {
     row('Your time rate', `${(1 / ship.u[0]).toFixed(4)} × far-away`),
     row('Time warp', `${warpLabel(settings.logWarp)}${settings.paused ? ' · paused' : ''}`),
     row('Disk peak', `${Math.round(disk.Tmax).toLocaleString()} K at ${disk.rPeak.toFixed(1)} M`),
-    row('Frame', `${frameMs.toFixed(0)} ms`),
+    row('Frame', `${frameMs.toFixed(0)} ms${renderer.renderScale < settings.renderScale - 1e-3 ? ` · traced at ${Math.round(100 * renderer.renderScale)}%` : ''}`),
   ];
   // The velocity budget: relative to someone hovering here, (dτ/dt)² + v² = 1 exactly.
   if (rel) {
@@ -990,6 +1112,7 @@ loadRealSky().then((sky) => {
     return;
   }
   renderer.setRealSky(sky);
+  redraw();
   skyControl.options({ 'Real sky (as seen from Earth)': 2, 'Procedural stars': 0, 'Lensing grid': 1 }).name('Sky');
   settings.sky = 2;
   refresh();
@@ -1019,7 +1142,7 @@ function updateAmbience(dtReal: number) {
 
   // What's ahead (or behind, looking back): a few times a second.
   ambienceTimer -= dtReal;
-  if (ambienceTimer <= 0) {
+  if (ambienceTimer <= 0 && !ship.crushed) {
     ambienceTimer = 0.25;
     view = sampleView(hole, ship, disk.rIn, settings.diskOn ? disk.rOut : 0, settings.rearView);
     // Home's signal comes from straight up: find where "up" appears in the ship's view (the
@@ -1086,7 +1209,7 @@ function updateAmbience(dtReal: number) {
   // Cinematic drift: a slow pan when the pilot leaves the controls alone.
   if (settings.cinematic && settings.drift && performance.now() - lastInput > 3000 && settings.attitude === 'hold') {
     ship.rotate(1, 0.035 * dtReal);
-    heldAttitude = ship.attitude();
+    captureHold();
   }
 
   if (ship.crushed && !ended) {
@@ -1104,14 +1227,25 @@ function updateAmbience(dtReal: number) {
 // are now) takes over at once; milestones (speed, time, tides) wait their turn, and only
 // the newest one waits.
 function showCaption(c: Caption) {
+  // Cautions are never dropped, only delayed.
+  const kept = captionQueue.filter((q) => q.keep);
   if (c.landmark) {
+    // A caution that's showing, or a milestone that only just appeared (caused by the same
+    // crossing, say), comes back after the landmark.
+    const now = captionNow && !captionNow.caption.landmark ? captionNow : null;
+    const interrupted = now && (now.caption.keep || performance.now() - now.since < 1500) ? now.caption : null;
     captionQueue.length = 0;
     captionQueue.push(c);
+    if (interrupted) captionQueue.push(interrupted);
+    captionQueue.push(...kept.filter((q) => q !== interrupted));
     nextCaption();
     return;
   }
-  captionQueue.push(c);
-  while (captionQueue.length > 1) captionQueue.shift();
+  // Otherwise cautions wait in order, and of the milestones only the newest one waits.
+  const milestones = captionQueue.filter((q) => !q.keep);
+  const newest = c.keep ? milestones.slice(-1) : [c];
+  captionQueue.length = 0;
+  captionQueue.push(...kept, ...(c.keep ? [c] : []), ...newest);
   if (!captionNow) nextCaption();
 }
 function nextCaption() {
@@ -1125,7 +1259,7 @@ function nextCaption() {
   const hold = captionQueue.length ? 3800 : 6000;
   captionEl.textContent = c.text;
   captionEl.classList.add('show');
-  captionNow = { landmark: c.landmark, since: performance.now() };
+  captionNow = { caption: c, since: performance.now() };
   captionTimers = [
     window.setTimeout(() => captionEl.classList.remove('show'), hold),
     window.setTimeout(nextCaption, hold + 900),
@@ -1201,6 +1335,12 @@ Object.assign(window, {
     ambience: () => ambience,
     story: () => story,
     photo,
+    /** Diagnostic: the auto-exposure state. */
+    get exposure() {
+      return { autoGain, settling: exposureSettling, settleUntil, now: performance.now() };
+    },
+    /** Diagnostic: per-pixel ray integration steps for the current view. */
+    countSteps: (quality?: 'draft' | 'high' | 'ultra') => renderer.countSteps(frameParams(quality)),
     timings,
     setRenderScale(v: number) {
       settings.renderScale = v;

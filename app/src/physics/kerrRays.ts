@@ -103,6 +103,67 @@ export function radialDirection(x: V4, dx: V4, a: number) {
   return r * r * (x[1] * dx[1] + x[2] * dx[2]) + (r * r + a * a) * x[3] * dx[3];
 }
 
+/**
+ * Between the horizons, light (traced back in time) can only move outward, and leaves
+ * through one of the two halves of the outer horizon: ours, or the one the idealised eternal
+ * hole shares with another universe. Which, is fixed by the sign of its energy relative to
+ * the horizon's rotation, E(r₊² + a²) − aL (the horizon generator ∂t + Ω_H ∂φ points to the
+ * future on our half, to the past on the other). Rays from the other half are black: in a
+ * real hole their light would come from the long-faded star that collapsed to make it.
+ * (test/capture.test.ts checks the verdict against integrating every ray to its end.)
+ */
+export function fromOtherSide(x: V4, p: V4, a: number, rHorizon: number): boolean {
+  const r = kerrRadius(x[1], x[2], x[3], a);
+  const rInner = a * a / rHorizon; // r₋ = a²/r₊ (M = 1)
+  if (r >= rHorizon || r <= rInner) return false;
+  const E = -p[0];
+  const L = x[1] * p[2] - x[2] * p[1];
+  const k = E * (rHorizon * rHorizon + a * a) - a * L;
+  return k > 1e-4 * Math.abs(E) * (rHorizon * rHorizon + a * a);
+}
+
+/** The verdict of plungesIn. */
+export type Plunge = 'in' | 'turns' | 'unsure';
+
+/**
+ * Whether a ray heading inward at x, outside the horizon, falls in: exact, from its constants
+ * of motion. Light around a Kerr hole conserves its energy E = −p_t, its angular momentum
+ * about the spin axis L = x p_y − y p_x, and Carter's constant
+ *   Q = p_θ² + cos²θ (L²/sin²θ − a²E²).
+ * Its radial motion obeys Σ² (dr/dλ)² = R(r), with
+ *   R(r) = [E(r² + a²) − aL]² − Δ[(L − aE)² + Q].
+ * Heading in, it turns back only where R = 0; if R stays positive all the way to the
+ * horizon, nothing can stop it. (These all hold in Kerr–Schild coordinates as in
+ * Boyer–Lindquist ones: the two differ only by shifts of t and φ that depend on r alone.)
+ * R is sampled between the horizon and r. 'in': it stays clearly positive, so the ray falls
+ * in. 'turns': it reaches zero well below r, so the ray will turn back out. 'unsure': it is
+ * near zero only close to r, as when the ray has only just turned inward from a turning
+ * point (R = 0 there); ask again a little further on. A ray that only just grazes a
+ * turning point is never called 'in', so it is left to the integrator. Callers must check
+ * the ray is heading in.
+ */
+export function plungesIn(x: V4, p: V4, a: number, rHorizon: number): Plunge {
+  const r = kerrRadius(x[1], x[2], x[3], a);
+  if (r <= rHorizon) return 'turns';
+  const E = -p[0];
+  const L = x[1] * p[2] - x[2] * p[1];
+  const cos = x[3] / r;
+  const sin2 = Math.max(1e-12, 1 - cos * cos);
+  const sin = Math.sqrt(sin2);
+  // p_θ = Σ p_i ∂xⁱ/∂θ, with x + iy = (r + ia) e^{iφ} sin θ and z = r cos θ.
+  const pTheta = (cos / sin) * (x[1] * p[1] + x[2] * p[2]) - r * sin * p[3];
+  const Q = pTheta * pTheta + cos * cos * ((L * L) / sin2 - a * a * E * E);
+  const radial = (s: number) => {
+    const delta = s * s - 2 * s + a * a;
+    const k = E * (s * s + a * a) - a * L;
+    return k * k - delta * ((L - a * E) ** 2 + Q);
+  };
+  const margin = 2e-3 * E * E * (r * r + a * a) ** 2;
+  const N = 32;
+  for (let i = 1; i <= N; i++) if (radial(rHorizon + ((r - rHorizon) * i) / N) <= margin) return i <= 0.9 * N ? 'turns' : 'unsure';
+  return 'in';
+}
+
 export interface TraceOptions {
   a: number;
   rHorizon: number;
@@ -111,6 +172,8 @@ export interface TraceOptions {
   /** Fraction of r moved per step. */
   stepScale: number;
   maxSteps: number;
+  /** Stop rays as soon as they're certain to fall in (default on; off for checking it). */
+  exactCapture?: boolean;
   escapeRadius: number;
   cameraInside: boolean;
   bodies?: RayBody[];
@@ -146,17 +209,45 @@ export function traceRay(x0: V4, p0: V4, o: TraceOptions): RayEnd {
   let x = [...x0] as V4;
   let p = [...p0] as V4;
   const rCapture = innerPhotonOrbit(Math.abs(o.a)) * 0.995;
+  // The early stops below skip the rest of a ray's path, so they may only be used once
+  // nothing else lies along it: inside the disk's inner edge, and with no bodies to hit.
+  const shortcuts = o.exactCapture !== false && !o.bodies?.length;
+  const clearBelow = Math.min(12, o.diskOut > 0 ? o.diskIn : 12);
+  let tested = !shortcuts;
+  if (shortcuts && fromOtherSide(x, p, o.a, o.rHorizon)) return { kind: 'hole', steps: 0 };
   for (let n = 0; n < o.maxSteps; n++) {
     const r = kerrRadius(x[1], x[2], x[3], o.a);
     if (o.cameraInside && r < 0.05) return { kind: 'hole', steps: n };
     const [k1x, k1p] = rayDerivs(x, p, o.a);
+    // The capture rules below apply to rays outside the horizon heading in, wherever the
+    // camera is. (From a camera inside, rays go out through the horizon, and some fall back.)
+    const inward = r > o.rHorizon && radialDirection(x, k1x, o.a) < 0;
+    // Certain to fall in (exact, from the constants of motion): stop now rather than follow
+    // it in, ever more slowly, toward a horizon it approaches but never crosses in these
+    // coordinates. Once a ray clearly has a turning point ahead it goes back out, so it
+    // needn't be asked again; if unsure, ask again a few steps on.
+    if (inward && !tested && r < clearBelow && n % 4 === 0) {
+      const verdict = plungesIn(x, p, o.a, o.rHorizon);
+      if (verdict === 'in') return { kind: 'hole', steps: n };
+      tested = verdict === 'turns';
+    }
+    // Stalled at the horizon: radius all but frozen while coordinate time races to −∞. Such
+    // a ray is heading, inside the horizon or just outside it, for parts of the eternal
+    // hole's horizon these coordinates don't reach: the other universe and the white hole
+    // of the idealised solution. In a real hole, its light comes from the long-faded surface
+    // of the star that collapsed to make it: black.
+    if (shortcuts && Math.abs(r - o.rHorizon) < 0.05 * o.rHorizon) {
+      const R2 = x[1] * x[1] + x[2] * x[2] + x[3] * x[3];
+      const dr = radialDirection(x, k1x, o.a) / (2 * r * r * r - (R2 - o.a * o.a) * r);
+      if (Math.abs(k1x[0]) > 1000 * Math.abs(dr)) return { kind: 'hole', steps: n };
+    }
     // Hugging the horizon from outside and still heading in: it never gets out. (Only heading
     // in: from a camera a hair above the horizon, the outward rays must still be traced.)
-    if (!o.cameraInside && r < o.rHorizon * 1.01 && radialDirection(x, k1x, o.a) < 0) return { kind: 'hole', steps: n };
+    if (inward && r < o.rHorizon * 1.01) return { kind: 'hole', steps: n };
     // Inside every photon orbit and heading in: no way back out. Stopping here, rather than
     // integrating on toward the horizon, also avoids the stiff region where coarse steps
     // can let a captured ray leak out with a wildly wrong blueshift.
-    if (!o.cameraInside && r < rCapture && radialDirection(x, k1x, o.a) < 0) return { kind: 'hole', steps: n };
+    if (inward && r < rCapture) return { kind: 'hole', steps: n };
     const spatial = Math.hypot(k1x[1], k1x[2], k1x[3]);
     if (r > o.escapeRadius && x[1] * k1x[1] + x[2] * k1x[2] + x[3] * k1x[3] > 0) {
       // A ray that has stopped being null was wrecked by integration error: don't trust it.

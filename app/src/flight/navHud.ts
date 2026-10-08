@@ -31,6 +31,9 @@ export interface Lamps {
   tidalG: number;
 }
 
+/** Unit vectors (cos, sin) of the navball's meridians, every 30° of azimuth. */
+const MERIDIANS = [0, 30, 60, 90, 120, 150].map((a) => [Math.cos((a * Math.PI) / 180), Math.sin((a * Math.PI) / 180)]);
+
 const MONO = "ui-monospace, 'Cascadia Mono', Consolas, 'SF Mono', monospace";
 
 /**
@@ -49,6 +52,9 @@ export class NavHud {
   private ballCtx: CanvasRenderingContext2D;
   private image: ImageData;
   private scale: number;
+  /** The ball orientation last painted, and the ball's surface directions (both cached). */
+  private lastBall: number[] | null = null;
+  private sphereCache: Float32Array | null = null;
 
   constructor(readonly canvas: HTMLCanvasElement) {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -132,60 +138,13 @@ export class NavHud {
   private drawBall(nav: NavState, target: V3 | null) {
     // Each point of the ball is a direction along the ship's axes; the ball matrix turns it
     // into East–North–Up. A rotation, so the ball's grid never stretches.
-    const [E, N, U] = nav.ball;
-    const d = this.ball.width;
-    const px = this.image.data;
-    const half = d / 2;
-    const deg = 180 / Math.PI;
-    for (let j = 0; j < d; j++) {
-      const sy = (half - j - 0.5) / half;
-      for (let i = 0; i < d; i++) {
-        const sx = (i + 0.5 - half) / half;
-        const q = sx * sx + sy * sy;
-        const o = (j * d + i) * 4;
-        if (q > 1) {
-          px[o + 3] = 0;
-          continue;
-        }
-        const sz = Math.sqrt(1 - q);
-        const e = sx * E[0] + sy * E[1] + sz * E[2];
-        const n = sx * N[0] + sy * N[1] + sz * N[2];
-        const u = sx * U[0] + sy * U[1] + sz * U[2];
-        const el = Math.asin(Math.max(-1, Math.min(1, u))) * deg;
-        const az = Math.atan2(e, n) * deg;
-        let r: number;
-        let g: number;
-        let b: number;
-        if (el >= 0) {
-          const k = el / 90;
-          r = 38 + 50 * k;
-          g = 104 + 60 * k;
-          b = 196 + 40 * k;
-        } else {
-          const k = -el / 90;
-          r = 128 - 60 * k;
-          g = 82 - 40 * k;
-          b = 42 - 20 * k;
-        }
-        // Grid: elevation every 30°, azimuth every 30° (thinning toward the poles).
-        const lw = 0.9 / this.scale;
-        const elLine = Math.abs(((el + 15) % 30 + 30) % 30 - 15) < lw;
-        const azLine = Math.abs(((az + 15) % 30 + 30) % 30 - 15) * Math.cos(el / deg) < lw && Math.abs(el) < 80;
-        if (Math.abs(el) < 0.9 * lw * 1.6) {
-          r = g = b = 245;
-        } else if (elLine || azLine) {
-          r = r * 0.55 + 110;
-          g = g * 0.55 + 110;
-          b = b * 0.55 + 110;
-        }
-        const shade = 0.5 + 0.5 * sz;
-        px[o] = r * shade;
-        px[o + 1] = g * shade;
-        px[o + 2] = b * shade;
-        px[o + 3] = 255;
-      }
+    // Repainting the ball pixel by pixel is the instruments' biggest cost, so it's only done
+    // when the ball has actually turned.
+    const flat = nav.ball.flat();
+    if (!this.lastBall || flat.some((v, k) => Math.abs(v - this.lastBall![k]) > 2e-4)) {
+      this.lastBall = flat;
+      this.paintBall(nav.ball);
     }
-    this.ballCtx.putImageData(this.image, 0, 0);
     const c = this.ctx;
     c.drawImage(this.ball, BALL.x - BALL_R, BALL.y - BALL_R, 2 * BALL_R, 2 * BALL_R);
     c.beginPath();
@@ -239,6 +198,82 @@ export class NavHud {
     c.lineTo(BALL.x + 26, BALL.y);
     c.stroke();
     c.textBaseline = 'alphabetic';
+  }
+
+  /** Paint the ball's pixels for this orientation (East, North, Up along the ship's axes). */
+  private paintBall([E, N, U]: number[][]) {
+    const d = this.ball.width;
+    const px = this.image.data;
+    const deg = 180 / Math.PI;
+    const lw = 0.9 / this.scale;
+    const sinLw = Math.sin(lw / deg);
+    const sphere = this.sphere();
+    for (let o = 0, m = 0; m < d * d; m++, o += 4) {
+      const sz = sphere[3 * m + 2];
+      if (sz < 0) {
+        px[o + 3] = 0;
+        continue;
+      }
+      const sx = sphere[3 * m];
+      const sy = sphere[3 * m + 1];
+      const e = sx * E[0] + sy * E[1] + sz * E[2];
+      const n = sx * N[0] + sy * N[1] + sz * N[2];
+      const u = sx * U[0] + sy * U[1] + sz * U[2];
+      const el = Math.asin(Math.max(-1, Math.min(1, u))) * deg;
+      let r: number;
+      let g: number;
+      let b: number;
+      if (el >= 0) {
+        const k = el / 90;
+        r = 38 + 50 * k;
+        g = 104 + 60 * k;
+        b = 196 + 40 * k;
+      } else {
+        const k = -el / 90;
+        r = 128 - 60 * k;
+        g = 82 - 40 * k;
+        b = 42 - 20 * k;
+      }
+      // Grid: elevation every 30°, azimuth every 30° (thinning toward the poles).
+      const elLine = Math.abs(((el + 15) % 30 + 30) % 30 - 15) < lw;
+      // Meridians every 30°: the sine of the angle to each one's plane, no atan2 needed.
+      let azLine = false;
+      if (Math.abs(el) < 80) for (let k = 0; k < 6 && !azLine; k++) azLine = Math.abs(e * MERIDIANS[k][0] - n * MERIDIANS[k][1]) < sinLw;
+      if (Math.abs(el) < 0.9 * lw * 1.6) {
+        r = g = b = 245;
+      } else if (elLine || azLine) {
+        r = r * 0.55 + 110;
+        g = g * 0.55 + 110;
+        b = b * 0.55 + 110;
+      }
+      const shade = 0.5 + 0.5 * sz;
+      px[o] = r * shade;
+      px[o + 1] = g * shade;
+      px[o + 2] = b * shade;
+      px[o + 3] = 255;
+    }
+    this.ballCtx.putImageData(this.image, 0, 0);
+  }
+
+  /** The ball's surface: for each pixel, the ship-frame direction (sz < 0 outside the ball). */
+  private sphere() {
+    if (this.sphereCache) return this.sphereCache;
+    const d = this.ball.width;
+    const half = d / 2;
+    const out = new Float32Array(d * d * 3);
+    for (let j = 0; j < d; j++) {
+      const sy = (half - j - 0.5) / half;
+      for (let i = 0; i < d; i++) {
+        const sx = (i + 0.5 - half) / half;
+        const q = sx * sx + sy * sy;
+        const m = 3 * (j * d + i);
+        out[m] = sx;
+        out[m + 1] = sy;
+        out[m + 2] = q > 1 ? -1 : Math.sqrt(1 - q);
+      }
+    }
+    this.sphereCache = out;
+    return out;
   }
 
   /** Screen position on the ball of a ship-frame direction (right, up, forward), front half only. */

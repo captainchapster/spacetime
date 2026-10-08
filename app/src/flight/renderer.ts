@@ -94,6 +94,8 @@ export class Renderer {
   private uniforms = new Map<WebGLProgram, Map<string, WebGLUniformLocation | null>>();
   private log2TRange: [number, number] = [0, 1];
   renderScale = 0.6;
+  /** Counts every (re)allocation of the canvas, which clears it: a frame must be redrawn. */
+  generation = 0;
   /** While a photo is being developed, the canvas belongs to it: resizes wait. */
   private capturing = false;
 
@@ -155,6 +157,7 @@ export class Renderer {
   }
 
   private allocate(w: number, h: number, scale: number) {
+    this.generation++;
     this.canvas.width = w;
     this.canvas.height = h;
     const sw = Math.max(1, Math.round(w * scale));
@@ -224,6 +227,21 @@ export class Renderer {
     }
   }
 
+  /**
+   * Diagnostic: trace this frame and return, per pixel, how many integration steps its ray
+   * took and how many of those were beyond r = 50 (the escape to the sky).
+   */
+  countSteps(f: FrameParams) {
+    const gl = this.gl;
+    this.setupTrace(f);
+    gl.uniform1i(this.loc(this.ray, 'uCountSteps'), 1);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.uniform1i(this.loc(this.ray, 'uCountSteps'), 0);
+    const px = new Float32Array(this.hdr.w * this.hdr.h * 4);
+    gl.readPixels(0, 0, this.hdr.w, this.hdr.h, gl.RGBA, gl.FLOAT, px);
+    return { w: this.hdr.w, h: this.hdr.h, px };
+  }
+
   /** Bind the ray tracer, its target and all its inputs. */
   private setupTrace(f: FrameParams) {
     const gl = this.gl;
@@ -243,6 +261,11 @@ export class Renderer {
     gl.uniform1f(u('uEscape'), Math.max(2000, 2 * Math.hypot(...f.position)));
     gl.uniform1i(u('uInside'), f.inside ? 1 : 0);
     gl.uniform1i(u('uMaxSteps'), f.maxSteps);
+    // Rays may be stopped early (certain to fall in) only once nothing else lies along their
+    // way: inside the disk's inner edge and every beacon's reach.
+    let clear = f.diskOn ? Math.min(12, f.diskIn) : 12;
+    for (const b of f.bodies.slice(0, MAX_BODIES)) clear = Math.min(clear, Math.hypot(b.bound[0], b.bound[1], b.bound[2]) - b.bound[3] - Math.abs(f.spin));
+    gl.uniform1f(u('uClearBelow'), clear);
     gl.uniform1f(u('uStepScale'), f.stepScale);
     gl.uniform1i(u('uDiskOn'), f.diskOn ? 1 : 0);
     gl.uniform1f(u('uDiskIn'), f.diskIn);

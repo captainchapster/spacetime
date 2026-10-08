@@ -26,6 +26,8 @@ uniform float uA, uRh, uEscape;
 uniform float uRCapture;              // just inside the innermost photon orbit (see kerrRays.ts)
 uniform bool uInside;
 uniform int uMaxSteps;
+uniform bool uCountSteps;             // diagnostic: output step counts instead of colour
+uniform float uClearBelow;            // nothing to hit inside this radius but the hole (early stops)
 uniform float uStepScale;
 uniform bool uDiskOn;
 uniform float uDiskIn, uDiskOut;
@@ -107,6 +109,27 @@ float hamiltonianAt(vec4 x, vec4 p) {
 }
 
 // Hamilton's equations for H = ½ η p p − ½ f (l·p)².
+// Whether a ray heading in at x (outside the horizon) falls in: exact, from its constants of
+// motion E, L and Carter's Q (mirrors plungesIn in kerrRays.ts). 0: falls in, 1: turns
+// back out, 2: unsure (only near r, as just after a turning point): ask again later.
+int plungesIn(vec4 x, vec4 p, float r) {
+  float E = -p.x;
+  float L = x.y * p.z - x.z * p.y;
+  float c = x.w / r;
+  float s2 = max(1e-12, 1.0 - c * c);
+  float s = sqrt(s2);
+  float pTheta = (c / s) * (x.y * p.y + x.z * p.z) - r * s * p.w;
+  float Q = pTheta * pTheta + c * c * (L * L / s2 - uA * uA * E * E);
+  float margin = 2e-3 * E * E * (r * r + uA * uA) * (r * r + uA * uA);
+  for (int i = 1; i <= 32; i++) {
+    float q = uRh + (r - uRh) * float(i) / 32.0;
+    float d = q * q - 2.0 * q + uA * uA;
+    float k = E * (q * q + uA * uA) - uA * L;
+    if (k * k - d * ((L - uA * E) * (L - uA * E) + Q) <= margin) return i <= 28 ? 1 : 2;
+  }
+  return 0;
+}
+
 void derivs(vec4 x, vec4 p, out vec4 dx, out vec4 dp) {
   float a = uA;
   float X = x.y, Y = x.z, Z = x.w;
@@ -313,6 +336,21 @@ vec3 sky(vec3 dir, float g, float foot) {
 
 // Emission (rgb) and opacity (a) where a ray crosses the disk. The disk is opaque except
 // toward its outer rim, where it thins out and lets background light through.
+const float EDDY_LIFE = 2.0;              // an eddy's life, in orbits at the disk's inner edge
+
+/**
+ * One generation of the disk's turbulent eddies at orbital phase phi (already carried round
+ * and sheared since the generation began) and log-radius lr; mean about 1. 'seed' makes
+ * each generation's eddies different.
+ */
+float eddies(float phi, float lr, vec3 seed) {
+  vec3 o = 97.0 * hash3(seed);
+  vec2 q = 2.0 * vec2(cos(phi), sin(phi));
+  float tex = fbm(vec3(q * 2.2, lr * 7.0) + o) * 0.8 + 0.6 * fbm(vec3(q * 7.0, lr * 22.0) + o.yzx);
+  float rings = 0.9 + 0.1 * sin(lr * 45.0 + 6.0 * fbm(vec3(q * 3.0, lr * 3.0) + o.zxy));
+  return tex * rings * 1.6;
+}
+
 vec4 shadeDisk(vec4 hit, vec4 p, float r) {
   // Gas on a prograde circular orbit: Ω = 1/(r^{3/2} + a), u ∝ (1, −Ωy, Ωx, 0).
   float om = 1.0 / (r * sqrt(r) + uA);
@@ -325,13 +363,30 @@ vec4 shadeDisk(vec4 hit, vec4 p, float r) {
   vec3 rad = blackbody(T) * uDiskGain;
 
   // Turbulent brightness pattern, carried around at the local orbital speed and seen as
-  // it was when the light left it (hit.x is the emission time relative to now).
-  float phi = atan(hit.z, hit.y) - om * (uTime + hit.x);
-  vec2 q = 2.0 * vec2(cos(phi), sin(phi));
+  // it was when the light left it (hit.x is the emission time relative to now). Eddies
+  // don't last: turbulence in a real disk keeps tearing them up and making new ones. (A
+  // pattern that lived forever would be sheared by the differential rotation into ever finer
+  // spirals, and after a long time warp the disk would look frozen and grainy.) Two
+  // generations overlap, each fading in and out as the other takes over.
+  //   Their life cycle runs on one clock for the whole disk, offset by a fixed, smooth
+  // function of radius so the disk doesn't all renew at once. (A clock running at each
+  // radius's own orbital rate would itself wind up, leaving neighbouring rings at unrelated
+  // stages: grain again.) Within a life every radius shears at its own orbital speed.
+  float t = uTime + hit.x;
   float lr = log(r);
-  float tex = fbm(vec3(q * 2.2, lr * 7.0)) * 0.8 + 0.6 * fbm(vec3(q * 7.0, lr * 22.0));
-  float rings = 0.9 + 0.1 * sin(lr * 45.0 + 6.0 * fbm(vec3(q * 3.0, lr * 3.0)));
-  float pattern = mix(1.0, tex * rings * 1.6, uTurbulence);
+  float lifetime = EDDY_LIFE * 6.2831853 * (uDiskIn * sqrt(uDiskIn) + uA); // orbits at the inner edge
+  float lives = t / lifetime + 1.5 * valueNoise(vec3(lr * 2.0, 5.0, 9.0));
+  float phi0 = atan(hit.z, hit.y);
+  float dev = 0.0, w2 = 0.0;
+  for (int k = 0; k < 2; k++) {
+    float life = lives + 0.5 * float(k);
+    float age = fract(life);
+    float w = 1.0 - abs(2.0 * age - 1.0);
+    dev += w * (eddies(phi0 - om * age * lifetime, lr, vec3(floor(life), float(k), 7.0)) - 1.0);
+    w2 += w * w;
+  }
+  // Normalised so the contrast doesn't dip while two generations are blended.
+  float pattern = mix(1.0, max(0.0, 1.0 + dev / sqrt(max(w2, 1e-6))), uTurbulence);
   // Emission fades at the ISCO by itself (zero torque); the outer rim thins out.
   float alpha = smoothstep(uDiskOut, uDiskOut * 0.6, r);
   return vec4(rad * pattern * alpha, alpha);
@@ -390,16 +445,42 @@ void main() {
   vec3 skyDir = d;
   float skyG = 1.0;
   float skyWeight = 0.0;
+  int steps = 0, farSteps = 0;
+  bool tested = false;                  // exact capture test done
+  // From inside the horizon, a ray headed for the other universe's half of the horizon is
+  // black, and known from the start (mirrors fromOtherSide in kerrRays.ts).
+  if (uInside && uClearBelow > uRh) {
+    float r0 = kerrR(x.yzw);
+    float k = -p.x * (uRh * uRh + uA * uA) - uA * (x.y * p.z - x.z * p.y);
+    if (r0 < uRh && r0 > uA * uA / uRh && k > 1e-4 * abs(p.x) * (uRh * uRh + uA * uA)) done = true;
+  }
   for (int n = 0; n < 4000; n++) {
-    if (n >= uMaxSteps) break;
+    if (done || n >= uMaxSteps) break;
+    steps++;
+    if (dot(x.yzw, x.yzw) > 2500.0) farSteps++;
     float r = kerrR(x.yzw);
     if (uInside && r < 0.05) { done = true; break; }
     vec4 k1x, k1p;
     derivs(x, p, k1x, k1p);
-    // Inside every photon orbit and heading in: captured (mirrors traceRay). That includes
-    // rays hugging the horizon; from a camera a hair above it, outward rays still go on.
-    bool inward = r * r * (x.y * k1x.y + x.z * k1x.z) + (r * r + uA * uA) * x.w * k1x.w < 0.0;
-    if (!uInside && inward && (r < uRCapture || r < uRh * 1.01)) { done = true; break; }
+    // Capture (mirrors traceRay), for rays outside the horizon heading in, wherever the camera
+    // is: certain to fall in by its constants of motion (tested once: a ray with a turning
+    // point goes back out), inside every photon orbit, or hugging the horizon. Stopping such
+    // rays early saves following them, ever more slowly, toward a horizon they never cross.
+    bool inward = r > uRh && r * r * (x.y * k1x.y + x.z * k1x.z) + (r * r + uA * uA) * x.w * k1x.w < 0.0;
+    if (inward && !tested && r < uClearBelow && n % 4 == 0) {
+      int verdict = plungesIn(x, p, r);
+      if (verdict == 0) { done = true; break; }
+      tested = verdict == 1;
+    }
+    if (inward && (r < uRCapture || r < uRh * 1.01)) { done = true; break; }
+    // Stalled at the horizon (radius frozen, time racing to −∞): heading for parts of the
+    // eternal hole's horizon these coordinates don't reach. In a real hole that light comes
+    // from the long-faded surface of the star that made it: black (mirrors traceRay).
+    if (abs(r - uRh) < 0.05 * uRh && r < uClearBelow) {
+      float rdot = (r * r * (x.y * k1x.y + x.z * k1x.z) + (r * r + uA * uA) * x.w * k1x.w)
+                 / (2.0 * r * r * r - (dot(x.yzw, x.yzw) - uA * uA) * r);
+      if (abs(k1x.x) > 1000.0 * abs(rdot)) { done = true; break; }
+    }
     float spatial = length(k1x.yzw);
     if (r > uEscape && dot(x.yzw, k1x.yzw) > 0.0) {
       // Only trust rays that are still null (mirrors rayIsNull in kerrRays.ts).
@@ -470,7 +551,7 @@ void main() {
   float foot = max(length(dFdx(skyDir)), length(dFdy(skyDir)));
   foot = min(max(foot, uPixelAngle * 0.25), 0.05);
   if (skyWeight > 0.0) col += skyWeight * sky(skyDir, skyG, foot);
-  outColor = vec4(col, 1.0);
+  outColor = uCountSteps ? vec4(float(steps), float(farSteps), kerrR(x.yzw), done ? 1.0 : 0.0) : vec4(col, 1.0);
 }`;
 
 /** Bright-pass + 2×2 downsample. */
